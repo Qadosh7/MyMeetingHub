@@ -4,7 +4,10 @@ export interface Meeting {
   title: string;
   created_at: string;
   updated_at?: string;
+  last_accessed?: string;
+  is_favorite?: boolean;
   status?: 'planning' | 'in_progress' | 'completed';
+  tags?: string[];
   topics?: (Topic & { topic_participants?: { participant_name: string }[] })[];
   breaks?: Break[];
 }

@@ -8,9 +8,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play } from 'lucide-react';
+import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play, Star, Tag, Filter, X, ChevronDown, ListFilter, SortAsc, LayoutGrid, CheckCircle2, History } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Badge } from '@/components/ui/badge';
+import { useMemo } from 'react';
+
+type SortOption = 'recent' | 'oldest' | 'longest' | 'shortest' | 'participants';
+type DateFilter = 'all' | 'today' | 'week' | 'month';
+type DurationFilter = 'all' | 'short' | 'medium' | 'long';
+type StatusFilter = 'all' | 'completed' | 'planning';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -19,11 +26,106 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
+  
+  // Search and Filters State
   const [searchQuery, setSearchQuery] = useState('');
+  const [isFavoriteOnly, setIsFavoriteOnly] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('recent');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     fetchMeetings();
   }, []);
+
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    meetings.forEach(m => m.tags?.forEach(t => tags.add(t)));
+    return Array.from(tags).sort();
+  }, [meetings]);
+
+  const filteredAndSortedMeetings = useMemo(() => {
+    let result = meetings.filter(meeting => {
+      // Search
+      const searchLower = searchQuery.toLowerCase();
+      const matchesSearch = 
+        meeting.title.toLowerCase().includes(searchLower) ||
+        meeting.topics?.some(t => 
+          t.presenter?.toLowerCase().includes(searchLower) ||
+          t.topic_participants?.some(p => p.participant_name.toLowerCase().includes(searchLower))
+        );
+      
+      if (!matchesSearch) return false;
+
+      // Favorites
+      if (isFavoriteOnly && !meeting.is_favorite) return false;
+
+      // Status
+      if (statusFilter !== 'all' && meeting.status !== statusFilter) return false;
+
+      // Date
+      if (dateFilter !== 'all') {
+        const date = new Date(meeting.created_at);
+        const now = new Date();
+        if (dateFilter === 'today') {
+          if (date.toDateString() !== now.toDateString()) return false;
+        } else if (dateFilter === 'week') {
+          const weekAgo = new Date();
+          weekAgo.setDate(now.getDate() - 7);
+          if (date < weekAgo) return false;
+        } else if (dateFilter === 'month') {
+          const monthAgo = new Date();
+          monthAgo.setMonth(now.getMonth() - 1);
+          if (date < monthAgo) return false;
+        }
+      }
+
+      // Duration
+      const totalDuration = (meeting.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) +
+                           (meeting.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+      
+      if (durationFilter === 'short' && totalDuration >= 30) return false;
+      if (durationFilter === 'medium' && (totalDuration < 30 || totalDuration > 90)) return false;
+      if (durationFilter === 'long' && totalDuration <= 90) return false;
+
+      // Tags
+      if (selectedTags.length > 0) {
+        if (!meeting.tags?.some(tag => selectedTags.includes(tag))) return false;
+      }
+
+      return true;
+    });
+
+    // Sorting
+    result.sort((a, b) => {
+      if (sortBy === 'recent') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (sortBy === 'oldest') return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      
+      const durationA = (a.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) + (a.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+      const durationB = (b.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) + (b.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+      
+      if (sortBy === 'longest') return durationB - durationA;
+      if (sortBy === 'shortest') return durationA - durationB;
+      
+      const participantsA = new Set(a.topics?.flatMap(t => t.topic_participants?.map(p => p.participant_name) || [])).size;
+      const participantsB = new Set(b.topics?.flatMap(t => t.topic_participants?.map(p => p.participant_name) || [])).size;
+      
+      if (sortBy === 'participants') return participantsB - participantsA;
+      
+      return 0;
+    });
+
+    return result;
+  }, [meetings, searchQuery, isFavoriteOnly, dateFilter, durationFilter, statusFilter, sortBy, selectedTags]);
+
+  const recentMeetings = useMemo(() => {
+    return [...meetings]
+      .sort((a, b) => new Date(b.last_accessed || b.created_at).getTime() - new Date(a.last_accessed || a.created_at).getTime())
+      .slice(0, 4);
+  }, [meetings]);
 
   const fetchMeetings = async () => {
     if (!user) return;
