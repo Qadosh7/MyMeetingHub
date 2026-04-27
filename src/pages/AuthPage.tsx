@@ -143,7 +143,15 @@ export default function AuthPage() {
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-destructive">Atenção Necessária</h3>
                 <p className="text-xs text-destructive/80 leading-relaxed">
-                  Defina as chaves VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no seu ambiente.
+                  {(() => {
+                    const missing = [];
+                    if (!import.meta.env.VITE_SUPABASE_URL) missing.push('VITE_SUPABASE_URL');
+                    if (!import.meta.env.VITE_SUPABASE_ANON_KEY) missing.push('VITE_SUPABASE_ANON_KEY');
+                    if (missing.length > 0) {
+                      return `Chaves ausentes: ${missing.join(', ')}. Adicione-as nos Secrets do projeto.`;
+                    }
+                    return 'A configuração do Supabase parece inválida. Verifique o formato da URL e da Chave Anon.';
+                  })()}
                 </p>
               </div>
             </motion.div>
