@@ -105,29 +105,39 @@ export default function AppLayout({ children }: AppLayoutProps) {
           })}
         </div>
 
-        <div className="p-4 border-t space-y-2 shrink-0">
+        <div className="p-4 border-t space-y-3 shrink-0 bg-muted/20">
           <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setIsDark(!isDark)}
-            className="w-full justify-start gap-3 h-11 px-3 rounded-xl"
+            onClick={() => navigate('/')} 
+            className="w-full justify-start gap-3 h-11 px-3 rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
           >
-            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            {isSidebarOpen && <span>{isDark ? 'Modo Claro' : 'Modo Escuro'}</span>}
+            <Plus className="h-5 w-5" />
+            {isSidebarOpen && <span className="font-bold text-sm">Nova Reunião</span>}
           </Button>
+          
+          <div className="space-y-1 pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsDark(!isDark)}
+              className="w-full justify-start gap-3 h-10 px-3 rounded-xl text-muted-foreground hover:text-foreground"
+            >
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {isSidebarOpen && <span className="text-xs font-medium">{isDark ? 'Modo Claro' : 'Modo Escuro'}</span>}
+            </Button>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleSignOut}
-            className="w-full justify-start gap-3 h-11 px-3 rounded-xl text-muted-foreground hover:text-destructive transition-colors"
-          >
-            <LogOut className="h-5 w-5" />
-            {isSidebarOpen && <span>Sair</span>}
-          </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSignOut}
+              className="w-full justify-start gap-3 h-10 px-3 rounded-xl text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              {isSidebarOpen && <span className="text-xs font-medium">Sair</span>}
+            </Button>
+          </div>
 
           <div className={cn(
-            "pt-4 flex items-center gap-3 px-2 overflow-hidden",
+            "pt-4 flex items-center gap-3 px-2 overflow-hidden border-t border-border/50",
             !isSidebarOpen && "justify-center"
           )}>
             <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0 border border-primary/50">

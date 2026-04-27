@@ -147,13 +147,11 @@ export default function Dashboard() {
 
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger
-              render={
-                <Button className="rounded-xl px-5 gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-transform">
-                  <Plus size={18} />
-                  Nova Reunião
-                </Button>
-              }
-            />
+              className="rounded-xl px-5 gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-transform bg-primary text-primary-foreground h-10 inline-flex items-center justify-center text-sm font-medium whitespace-nowrap transition-all outline-none select-none active:translate-y-px"
+            >
+              <Plus size={18} />
+              Nova Reunião
+            </DialogTrigger>
             <DialogContent className="rounded-2xl border-border bg-card">
               <DialogHeader>
                 <DialogTitle className="text-xl font-bold">Nova Reunião</DialogTitle>
@@ -230,10 +228,11 @@ export default function Dashboard() {
                 </div>
                 
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                    <button className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors">
-                      <MoreVertical size={16} />
-                    </button>
+                  <DropdownMenuTrigger 
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
+                  >
+                    <MoreVertical size={16} />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="rounded-xl border-border bg-card">
                     <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-2 rounded-lg cursor-pointer">
