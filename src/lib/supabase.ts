@@ -16,7 +16,9 @@ const isConfigured =
   Boolean(supabaseAnonKey);
 
 if (!isConfigured) {
-  console.warn('Supabase não detectado ou chaves inválidas. Verifique os Secrets do projeto.');
+  console.warn('Supabase não detectado ou chaves inválidas.');
+  console.log('URL detectada:', supabaseUrl ? 'Sim' : 'Não');
+  console.log('Chave Anon detectada:', supabaseAnonKey ? 'Sim' : 'Não');
 }
 
 export const supabase = createClient(
