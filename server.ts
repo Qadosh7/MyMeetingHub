@@ -26,8 +26,14 @@ async function startServer() {
     // In production, serve the built files from dist
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
+    // SPA Fallback: serve index.html for all non-file requests
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      if (req.path.includes(".")) {
+        // If a file was requested (like a missing .png) but not found by express.static
+        res.status(404).send("Not found");
+      } else {
+        res.sendFile(path.resolve(distPath, "index.html"));
+      }
     });
   }
 
