@@ -4,10 +4,13 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import AuthPage from './pages/AuthPage';
 import Dashboard from './pages/Dashboard';
 import MeetingPage from './pages/MeetingPage';
+import MeetingRunPage from './pages/MeetingRunPage';
 import { Toaster } from '@/components/ui/sonner';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+
+  console.log('PrivateRoute - Loading:', loading, 'User:', user?.email);
 
   if (loading) {
     return (
@@ -18,11 +21,15 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) {
+    console.log('PrivateRoute - No user, redirecting to /auth');
     return <Navigate to="/auth" />;
   }
 
+  console.log('PrivateRoute - User authenticated, rendering children');
   return <>{children}</>;
 }
+
+import AppLayout from './components/AppLayout';
 
 export default function App() {
   return (
@@ -34,7 +41,9 @@ export default function App() {
             path="/"
             element={
               <PrivateRoute>
-                <Dashboard />
+                <AppLayout>
+                  <Dashboard />
+                </AppLayout>
               </PrivateRoute>
             }
           />
@@ -42,7 +51,17 @@ export default function App() {
             path="/meeting/:id"
             element={
               <PrivateRoute>
-                <MeetingPage />
+                <AppLayout>
+                  <MeetingPage />
+                </AppLayout>
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/meeting/:id/run"
+            element={
+              <PrivateRoute>
+                <MeetingRunPage />
               </PrivateRoute>
             }
           />

@@ -27,7 +27,7 @@ export interface Break {
 export interface TopicParticipant {
   id: string;
   topic_id: string;
-  name: string;
+  participant_name: string;
 }
 
 export type AgendaItem = (Topic | Break) & { type: 'topic' | 'break' };

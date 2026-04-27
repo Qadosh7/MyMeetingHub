@@ -1,20 +1,44 @@
-import React, { useState } from 'react';
-import { supabase } from '@/src/lib/supabase';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase, isSupabaseConfigured } from '@/src/lib/supabase';
+import { useAuth } from '@/src/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Calendar } from 'lucide-react';
+import { Calendar, AlertTriangle } from 'lucide-react';
 
 export default function AuthPage() {
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
 
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/');
+    }
+  }, [user, authLoading, navigate]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!isSupabaseConfigured) {
+      toast.error('Supabase não configurado. Adicione as chaves VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nos Secrets.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -32,6 +56,7 @@ export default function AuthPage() {
         });
         if (error) throw error;
         toast.success('Login realizado com sucesso!');
+        navigate('/');
       }
     } catch (error: any) {
       toast.error(error.message || 'Erro ao processar autenticação');
@@ -56,6 +81,18 @@ export default function AuthPage() {
         </CardHeader>
         <form onSubmit={handleAuth}>
           <CardContent className="space-y-4">
+            {!isSupabaseConfigured && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-3 text-amber-800 text-sm">
+                <AlertTriangle className="shrink-0" size={18} />
+                <p>
+                  <strong>Atenção:</strong> Supabase não configurado. Adicione 
+                  <code className="mx-1 bg-amber-100 px-1 rounded">VITE_SUPABASE_URL</code> 
+                  e 
+                  <code className="mx-1 bg-amber-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> 
+                  nos Secrets do projeto.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
