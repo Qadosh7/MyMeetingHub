@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users } from 'lucide-react';
+import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -30,7 +30,20 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from('meetings')
-        .select('*')
+        .select(`
+          *,
+          topics (
+            id,
+            duration_minutes,
+            presenter,
+            topic_participants (
+              participant_name
+            )
+          ),
+          breaks (
+            duration_minutes
+          )
+        `)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -48,7 +61,11 @@ export default function Dashboard() {
     try {
       const { data, error } = await supabase
         .from('meetings')
-        .insert([{ title: newMeetingTitle, user_id: user.id }])
+        .insert([{ 
+          title: newMeetingTitle, 
+          user_id: user.id,
+          updated_at: new Date().toISOString()
+        }])
         .select()
         .single();
 
@@ -80,7 +97,11 @@ export default function Dashboard() {
     try {
       const { data: newMeeting, error: mError } = await supabase
         .from('meetings')
-        .insert([{ title: `${meeting.title} (Cópia)`, user_id: user.id }])
+        .insert([{ 
+          title: `${meeting.title} (Cópia)`, 
+          user_id: user.id,
+          updated_at: new Date().toISOString()
+        }])
         .select()
         .single();
 
@@ -214,57 +235,157 @@ export default function Dashboard() {
           animate="show"
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
         >
-          {filteredMeetings.map((meeting) => (
-            <motion.div
-              key={meeting.id}
-              variants={itemVariants}
-              whileHover={{ y: -4 }}
-              className="group relative flex flex-col bg-card border rounded-2xl p-6 transition-all hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-white/[0.02] cursor-pointer"
-              onClick={() => navigate(`/meeting/${meeting.id}`)}
-            >
-              <div className="flex justify-between items-start mb-6">
-                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 border border-primary/20">
-                  <Calendar className="h-5 w-5 text-primary" />
-                </div>
-                
-                <DropdownMenu>
-                  <DropdownMenuTrigger 
-                    onClick={(e) => e.stopPropagation()}
-                    className="h-8 w-8 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors"
-                  >
-                    <MoreVertical size={16} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="rounded-xl border-border bg-card">
-                    <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-2 rounded-lg cursor-pointer">
-                      <Copy size={14} /> Duplicar
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => deleteMeeting(meeting.id)} className="gap-2 rounded-lg cursor-pointer text-destructive focus:text-destructive">
-                      <Trash2 size={14} /> Excluir
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+          {filteredMeetings.map((meeting) => {
+            const totalDuration = (meeting.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) +
+                                 (meeting.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+            
+            const participantsSet = new Set<string>();
+            meeting.topics?.forEach(t => {
+              t.topic_participants?.forEach(p => participantsSet.add(p.participant_name));
+            });
+            const participantCount = participantsSet.size;
 
-              <div className="space-y-4">
-                <h3 className="font-bold text-lg leading-tight group-hover:text-primary transition-colors line-clamp-2">
-                  {meeting.title}
-                </h3>
-                
-                <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <Clock size={14} />
-                    <span>{new Date(meeting.created_at).toLocaleDateString('pt-BR')}</span>
+            const presentersSet = new Set<string>();
+            meeting.topics?.forEach(t => {
+              if (t.presenter) presentersSet.add(t.presenter);
+            });
+            const presenterCount = presentersSet.size;
+
+            const isLong = totalDuration > 120;
+            const isShort = totalDuration < 30 && totalDuration > 0;
+            const isComplete = meeting.status === 'completed';
+            const isInProgress = meeting.status === 'in_progress';
+
+            const getRelativeTime = (dateStr: string) => {
+              const date = new Date(dateStr);
+              const now = new Date();
+              const diffTime = Math.abs(now.getTime() - date.getTime());
+              const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+              
+              if (diffDays === 0) return 'Hoje';
+              if (diffDays === 1) return 'Ontem';
+              return `Há ${diffDays} dias`;
+            };
+
+            return (
+              <motion.div
+                key={meeting.id}
+                variants={itemVariants}
+                whileHover={{ y: -8, scale: 1.01 }}
+                className="group relative flex flex-col bg-card border border-border/50 rounded-[2rem] p-7 transition-all hover:shadow-2xl hover:shadow-primary/5 cursor-pointer overflow-hidden"
+                onClick={() => navigate(`/meeting/${meeting.id}`)}
+              >
+                {/* Decorative background element */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+
+                <div className="flex justify-between items-start mb-6 relative z-10">
+                  <div className="flex flex-wrap gap-2">
+                    {isComplete && (
+                      <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-[10px] font-black uppercase tracking-wider border border-emerald-500/20">
+                        Completa
+                      </span>
+                    )}
+                    {isInProgress && (
+                      <span className="px-3 py-1 rounded-full bg-sky-500/10 text-sky-600 text-[10px] font-black uppercase tracking-wider border border-sky-500/20">
+                        Em progresso
+                      </span>
+                    )}
+                    {isShort && (
+                      <span className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 text-[10px] font-black uppercase tracking-wider border border-amber-500/20">
+                        Rápida
+                      </span>
+                    )}
+                    {isLong && (
+                      <span className="px-3 py-1 rounded-full bg-violet-500/10 text-violet-600 text-[10px] font-black uppercase tracking-wider border border-violet-500/20">
+                        Longa
+                      </span>
+                    )}
+                  </div>
+                  
+                  <DropdownMenu>
+                    <DropdownMenuTrigger 
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-10 w-10 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground transition-all hover:rotate-90"
+                    >
+                      <MoreVertical size={18} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-2 min-w-[160px] shadow-xl">
+                      <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}`)} className="gap-3 rounded-xl cursor-pointer py-3">
+                        <Calendar size={16} className="text-primary" /> Editar pauta
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-3 rounded-xl cursor-pointer py-3">
+                        <Copy size={16} /> Duplicar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => deleteMeeting(meeting.id)} className="gap-3 rounded-xl cursor-pointer py-3 text-destructive focus:text-destructive">
+                        <Trash2 size={16} /> Excluir permanentemente
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <div className="space-y-6 relative z-10 flex-1">
+                  <div className="space-y-2">
+                    <h3 className="font-black text-2xl leading-tight group-hover:text-primary transition-colors line-clamp-2">
+                      {meeting.title}
+                    </h3>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                      Atualizado {getRelativeTime(meeting.updated_at || meeting.created_at)}
+                    </p>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border/50">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Clock size={14} className="text-primary/60" />
+                        <span className="text-[10px] font-black uppercase tracking-wider">Duração</span>
+                      </div>
+                      <p className="font-mono font-bold text-lg">{totalDuration}m</p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Users size={14} className="text-primary/60" />
+                        <span className="text-[10px] font-black uppercase tracking-wider">Membros</span>
+                      </div>
+                      <p className="font-mono font-bold text-lg">{participantCount}</p>
+                    </div>
+                  </div>
+
+                  {presenterCount > 0 && (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-muted/40 rounded-xl w-fit">
+                      <User size={12} className="text-muted-foreground" />
+                      <span className="text-[10px] font-bold text-muted-foreground">
+                        {presenterCount} {presenterCount === 1 ? 'Apresentador' : 'Apresentadores'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8 flex items-center justify-between relative z-10">
+                  <div className="flex -space-x-2">
+                    {Array.from(participantsSet).slice(0, 4).map((name, i) => (
+                      <div 
+                        key={i} 
+                        className="h-8 w-8 rounded-full border-2 border-card bg-primary/10 flex items-center justify-center text-[10px] font-black text-primary ring-1 ring-border/20"
+                        title={name}
+                      >
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                    ))}
+                    {participantCount > 4 && (
+                      <div className="h-8 w-8 rounded-full border-2 border-card bg-muted flex items-center justify-center text-[10px] font-black text-muted-foreground ring-1 ring-border/20">
+                        +{participantCount - 4}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/30 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-300">
+                    <Play size={18} className="ml-0.5 fill-current" />
                   </div>
                 </div>
-              </div>
-
-              <div className="absolute right-6 bottom-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-white shadow-md shadow-primary/20">
-                  <Plus size={16} />
-                </div>
-              </div>
-            </motion.div>
-          ))}
+              </motion.div>
+            );
+          })}
         </motion.div>
       )}
     </div>

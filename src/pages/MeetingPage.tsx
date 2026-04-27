@@ -335,7 +335,13 @@ export default function MeetingPage() {
       return;
     }
     try {
-      const { error } = await supabase.from('meetings').update({ title: titleInput }).eq('id', id);
+      const { error } = await supabase
+        .from('meetings')
+        .update({ 
+          title: titleInput,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
       if (error) throw error;
       setMeeting({ ...meeting!, title: titleInput });
       setIsEditingTitle(false);

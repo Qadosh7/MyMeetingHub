@@ -3,6 +3,10 @@ export interface Meeting {
   user_id: string;
   title: string;
   created_at: string;
+  updated_at?: string;
+  status?: 'planning' | 'in_progress' | 'completed';
+  topics?: (Topic & { topic_participants?: { participant_name: string }[] })[];
+  breaks?: Break[];
 }
 
 export interface Topic {
