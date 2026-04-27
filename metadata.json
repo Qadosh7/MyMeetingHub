@@ -1,0 +1,6 @@
+{
+  "name": "Agenda Inteligente de Reuniões",
+  "description": "Uma aplicação inteligente para gerenciar pautas de reuniões com controle de tempo, participantes e reordenação via drag-and-drop.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
