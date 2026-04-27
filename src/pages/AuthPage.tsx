@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase, isSupabaseConfigured } from '@/src/lib/supabase';
+import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,11 +37,6 @@ export default function AuthPage() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!isSupabaseConfigured) {
-      toast.error('Supabase não configurado. Adicione as chaves VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.');
-      return;
-    }
-
     setLoading(true);
 
     try {
@@ -133,29 +128,6 @@ export default function AuthPage() {
             </motion.div>
           </div>
 
-          {!isSupabaseConfigured && (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-destructive/10 border border-destructive/20 p-4 rounded-2xl flex items-start gap-4 shadow-sm"
-            >
-              <AlertTriangle className="text-destructive shrink-0" size={20} />
-              <div className="space-y-1">
-                <h3 className="text-sm font-bold text-destructive">Atenção Necessária</h3>
-                <p className="text-xs text-destructive/80 leading-relaxed">
-                  {(() => {
-                    const missing = [];
-                    if (!import.meta.env.VITE_SUPABASE_URL) missing.push('VITE_SUPABASE_URL');
-                    if (!import.meta.env.VITE_SUPABASE_ANON_KEY) missing.push('VITE_SUPABASE_ANON_KEY');
-                    if (missing.length > 0) {
-                      return `Chaves ausentes: ${missing.join(', ')}. Adicione-as nos Secrets do projeto.`;
-                    }
-                    return 'A configuração do Supabase parece inválida. Verifique o formato da URL e da Chave Anon.';
-                  })()}
-                </p>
-              </div>
-            </motion.div>
-          )}
 
           <form onSubmit={handleAuth} className="space-y-6">
             <div className="space-y-2">
