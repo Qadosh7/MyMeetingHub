@@ -208,9 +208,17 @@ export default function MeetingRunPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isLocked, setIsLocked] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [volume, setVolume] = useState(0.5);
   const [warningTime, setWarningTime] = useState(2); // minutes
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState<number | null>(null);
+
+  // Precision Timer Refs
+  const startTimeRef = useRef<number | null>(null);
+  const initialTimeLeftRef = useRef<number>(0);
+  const executionLogs = useRef<Record<string, { planned: number; actual: number }>>({});
 
   // Alert tracking to prevent repeat sounds
   const playState = useRef<{ warning: boolean; critical: boolean; exceeded: boolean }>({
@@ -223,13 +231,26 @@ export default function MeetingRunPage() {
   const sounds = useRef<{ warning: HTMLAudioElement; critical: HTMLAudioElement; exceeded: HTMLAudioElement } | null>(null);
 
   useEffect(() => {
-    // Preload sounds
-    sounds.current = {
+    // Preload sounds with volume
+    const s = {
       warning: new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'),
       critical: new Audio('https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3'),
       exceeded: new Audio('https://assets.mixkit.co/active_storage/sfx/941/941-preview.mp3')
     };
+    Object.values(s).forEach((audio: any) => {
+      audio.volume = volume;
+      audio.preload = 'auto';
+    });
+    sounds.current = s;
   }, []);
+
+  useEffect(() => {
+    if (sounds.current) {
+      Object.values(sounds.current).forEach((audio: any) => {
+        audio.volume = volume;
+      });
+    }
+  }, [volume]);
 
   const playAlert = (type: 'warning' | 'critical' | 'exceeded') => {
     if (!soundEnabled || !sounds.current) return;
@@ -304,40 +325,54 @@ export default function MeetingRunPage() {
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isActive) {
+      if (!startTimeRef.current) {
+        startTimeRef.current = Date.now();
+        initialTimeLeftRef.current = timeLeft;
+      }
+
       interval = setInterval(() => {
-        setTimeLeft((prev) => {
-          const next = prev - 1;
-          
-          // Logic for alerts
-          const totalSeconds = (items[currentIndex] as any)?.duration_minutes * 60 || 0;
-          const warnSecs = Math.min(warningTime * 60, totalSeconds * 0.1);
-          
-          // Warning (Yellow)
-          if (next <= warnSecs && next > 0 && !playState.current.warning) {
-            playAlert('warning');
-            playState.current.warning = true;
-          }
-          
-          // Critical (0:00 / Red)
-          if (next === 0 && !playState.current.critical) {
-            playAlert('critical');
-            playState.current.critical = true;
-          }
+        const deltaSeconds = Math.floor((Date.now() - (startTimeRef.current || 0)) / 1000);
+        const next = initialTimeLeftRef.current - deltaSeconds;
+        
+        setTimeLeft(next);
 
-          // Exceeded (1 min over / Intensified)
-          if (next === -60 && !playState.current.exceeded) {
-            playAlert('exceeded');
-            playState.current.exceeded = true;
-          }
+        // Logic for alerts
+        const totalSeconds = (items[currentIndex] as any)?.duration_minutes * 60 || 0;
+        const warnSecs = Math.min(warningTime * 60, totalSeconds * 0.1);
+        
+        // Warning (Yellow)
+        if (next <= warnSecs && next > 0 && !playState.current.warning) {
+          playAlert('warning');
+          playState.current.warning = true;
+        }
+        
+        // Critical (0:00 / Red)
+        if (next === 0 && !playState.current.critical) {
+          playAlert('critical');
+          playState.current.critical = true;
+        }
 
-          if (autoAdvance && next <= -300) { // 5 mins auto-advance
+        // Exceeded (1 min over / Intensified)
+        if (next === -60 && !playState.current.exceeded) {
+          playAlert('exceeded');
+          playState.current.exceeded = true;
+        }
+
+        // Auto Advance Logic
+        if (autoAdvance && next <= -120) { // Start countdown at 2 mins over
+          const countdown = 5 - (Math.abs(next) - 120);
+          if (countdown > 0) {
+            setAutoAdvanceCountdown(countdown);
+          } else {
+            setAutoAdvanceCountdown(null);
             handleNext();
-            return 0;
           }
-
-          return next;
-        });
+        } else {
+          setAutoAdvanceCountdown(null);
+        }
       }, 1000);
+    } else {
+      startTimeRef.current = null;
     }
     return () => clearInterval(interval);
   }, [isActive, items, currentIndex, warningTime, autoAdvance]);
@@ -345,6 +380,20 @@ export default function MeetingRunPage() {
   // Reset alert states when item changes
   useEffect(() => {
     playState.current = { warning: false, critical: false, exceeded: false };
+    startTimeRef.current = null;
+    setAutoAdvanceCountdown(null);
+    
+    // Log execution
+    if (items[currentIndex]) {
+      const prevItem = items[currentIndex - 1];
+      if (prevItem) {
+        // Simple log for now
+        executionLogs.current[prevItem.id] = {
+          planned: prevItem.duration_minutes,
+          actual: prevItem.duration_minutes - (timeLeft / 60)
+        };
+      }
+    }
   }, [currentIndex]);
 
   const handleTogglePlay = () => {
@@ -511,6 +560,9 @@ export default function MeetingRunPage() {
         : isWarning 
           ? 'text-amber-400' 
           : 'text-white';
+
+    const progressColor = isExpired ? 'bg-red-500' : isWarning ? 'bg-amber-400' : 'bg-primary';
+
   const currentParticipants = participants.filter(p => p.topic_id === currentItem.id);
 
   return (
@@ -545,13 +597,19 @@ export default function MeetingRunPage() {
            <Button 
             variant="ghost" 
             size="icon" 
+            onClick={() => setIsFocusMode(!isFocusMode)}
+            className={`transition-colors ${isFocusMode ? 'text-primary' : 'text-slate-500 hover:text-white'}`}
+            title="Modo Foco"
+           >
+             <Maximize2 size={20} />
+           </Button>
+           <Button 
+            variant="ghost" 
+            size="icon" 
             onClick={() => setShowSettings(!showSettings)} 
             className={`transition-colors ${showSettings ? 'text-primary' : 'text-slate-500 hover:text-white'}`}
            >
              <Settings2 size={20} />
-           </Button>
-           <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-slate-500 hover:text-white hover:bg-white/10">
-             {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
            </Button>
         </div>
 
@@ -576,6 +634,24 @@ export default function MeetingRunPage() {
                   </button>
                 </div>
 
+                {soundEnabled && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-xs text-slate-400">Volume</span>
+                      <span className="text-xs text-primary font-bold">{Math.round(volume * 100)}%</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.1"
+                      value={volume}
+                      onChange={(e) => setVolume(parseFloat(e.target.value))}
+                      className="w-full accent-primary bg-slate-700 h-1.5 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-slate-400">Auto Avançar</span>
                   <button 
@@ -588,8 +664,8 @@ export default function MeetingRunPage() {
 
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-xs text-slate-400">Tempo de Aviso</span>
-                    <span className="text-xs text-primary font-bold">{warningTime}m</span>
+                    <span className="text-xs text-slate-400">Aviso Prévio</span>
+                    <span className="text-xs text-primary font-bold">{warningTime}min</span>
                   </div>
                   <input 
                     type="range" 
@@ -605,22 +681,40 @@ export default function MeetingRunPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <AnimatePresence>
+          {autoAdvanceCountdown !== null && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              className="absolute inset-0 flex items-center justify-center z-[100] pointer-events-none"
+            >
+              <div className="bg-primary text-black px-8 py-4 rounded-3xl font-black text-2xl shadow-2xl flex items-center gap-4">
+                <RotateCcw className="animate-spin" />
+                Avançando em {autoAdvanceCountdown}s...
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
       <main className="flex-1 flex overflow-hidden">
         {/* Navigation Sidebar */}
-        <aside className="w-80 bg-black/40 border-r border-white/10 p-6 overflow-y-auto hidden lg:flex flex-col gap-6">
+        <aside className={`w-80 bg-black/40 border-r border-white/10 p-6 overflow-y-auto hidden lg:flex flex-col gap-6 transition-all duration-500 ${isFocusMode ? 'w-0 opacity-0 p-0 overflow-hidden' : ''}`}>
           <div className="flex items-center justify-between">
             <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Fluxo da Reunião</h3>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={() => setIsLocked(!isLocked)}
-              className={`h-8 w-8 rounded-full ${isLocked ? 'text-primary' : 'text-slate-500'}`}
-              title={isLocked ? "Desbloquear Edição" : "Bloquear Edição"}
-            >
-              {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
-            </Button>
+            <div className="flex gap-1">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setIsLocked(!isLocked)}
+                className={`h-8 w-8 rounded-full ${isLocked ? 'text-primary' : 'text-slate-500'}`}
+                title={isLocked ? "Desbloquear Edição" : "Bloquear Edição"}
+              >
+                {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+              </Button>
+            </div>
           </div>
 
           <DndContext 
@@ -687,7 +781,7 @@ export default function MeetingRunPage() {
                   )}
 
                   {currentItem.type === 'topic' && (
-                    <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
+                    <div className={`flex flex-wrap items-center justify-center gap-4 pt-4 transition-all duration-500 ${isFocusMode ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>
                       <div 
                         className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 hover:bg-white/10 transition-all cursor-pointer group"
                         onClick={() => startEditing('presenter', (currentItem as Topic).presenter_name || '')}
@@ -749,10 +843,16 @@ export default function MeetingRunPage() {
                   </motion.div>
                   
                   <div className="w-full max-w-2xl mt-4">
-                    <Progress 
-                      value={((totalSeconds - timeLeft) / totalSeconds) * 100} 
-                      className={`h-1.5 transition-all ${isExpired ? 'bg-red-500/20' : 'bg-white/5'}`} 
-                    />
+                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden relative">
+                      <motion.div 
+                        initial={false}
+                        animate={{ 
+                          width: `${Math.min(100, Math.max(0, ((totalSeconds - timeLeft) / totalSeconds) * 100))}%`,
+                          backgroundColor: isExpired ? '#ef4444' : isWarning ? '#fbbf24' : '#00e5ff'
+                        }}
+                        className="h-full absolute left-0 top-0 shadow-[0_0_10px_rgba(0,0,0,0.5)]"
+                      />
+                    </div>
                     <div className="flex justify-between mt-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
                       <span>Início</span>
                       <span className={isExpired ? 'text-red-500' : 'text-primary'}>
