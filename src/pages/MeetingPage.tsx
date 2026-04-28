@@ -444,27 +444,55 @@ export default function MeetingPage() {
     try {
       const { error } = await supabase
         .from('meetings')
-        .update({ start_time: newStartTime })
+        .update({ 
+          start_time: newStartTime,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', id);
-      if (error) throw error;
+      
+      if (error) {
+        console.error('Error updating start time:', error);
+        throw error;
+      }
+      
       setMeeting(prev => prev ? { ...prev, start_time: newStartTime } : null);
       toast.success('Horário de início atualizado');
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Error in updateStartTime:', error);
       toast.error('Erro ao atualizar horário');
+      
+      if (error.message?.includes('column') && error.message?.includes('start_time')) {
+        toast.info('A coluna "start_time" parece estar faltando.');
+      }
     }
   };
 
   const updateMeetingDate = async (newDate: string) => {
     try {
+      const dateValue = newDate || null;
       const { error } = await supabase
         .from('meetings')
-        .update({ event_date: newDate })
+        .update({ 
+          event_date: dateValue,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', id);
-      if (error) throw error;
-      setMeeting(prev => prev ? { ...prev, event_date: newDate } : null);
+      
+      if (error) {
+        console.error('Error updating meeting date:', error);
+        throw error;
+      }
+      
+      setMeeting(prev => prev ? { ...prev, event_date: dateValue } : null);
       toast.success('Data atualizada');
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Error in updateMeetingDate:', error);
       toast.error('Erro ao atualizar data');
+      
+      // If it's a missing column error, inform the user
+      if (error.message?.includes('column') && error.message?.includes('event_date')) {
+        toast.info('A coluna "event_date" parece estar faltando no banco de dados.');
+      }
     }
   };
 

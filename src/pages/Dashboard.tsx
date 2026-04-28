@@ -280,18 +280,34 @@ export default function Dashboard() {
   const duplicateMeeting = async (meeting: Meeting) => {
     if (!user) return;
     try {
-      const { data: newMeeting, error: mError } = await supabase
+      const basicPayload = { 
+        title: `${meeting.title} (Cópia)`, 
+        user_id: user.id
+      };
+      
+      const fullPayload = {
+        ...basicPayload,
+        status: 'planning',
+        event_date: meeting.event_date || new Date().toISOString().split('T')[0],
+        start_time: meeting.start_time || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      let { data: newMeeting, error: mError } = await supabase
         .from('meetings')
-        .insert([{ 
-          title: `${meeting.title} (Cópia)`, 
-          user_id: user.id,
-          status: 'planning',
-          event_date: meeting.event_date || new Date().toISOString().split('T')[0],
-          start_time: meeting.start_time || new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }])
+        .insert([fullPayload])
         .select()
         .single();
+
+      if (mError && mError.message.includes('column') && mError.message.includes('not found')) {
+        const fallback = await supabase
+          .from('meetings')
+          .insert([basicPayload])
+          .select()
+          .single();
+        newMeeting = fallback.data;
+        mError = fallback.error;
+      }
 
       if (mError) throw mError;
 

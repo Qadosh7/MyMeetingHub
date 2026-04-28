@@ -27,6 +27,15 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='updated_at') THEN
         ALTER TABLE meetings ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='last_accessed') THEN
+        ALTER TABLE meetings ADD COLUMN last_accessed TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='is_favorite') THEN
+        ALTER TABLE meetings ADD COLUMN is_favorite BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='tags') THEN
+        ALTER TABLE meetings ADD COLUMN tags TEXT[] DEFAULT '{}';
+    END IF;
 END $$;
 
 -- 2. Participants Table (Global List)
