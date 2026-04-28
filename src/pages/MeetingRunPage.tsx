@@ -1,17 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import * as React from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/src/lib/supabase';
-import { Meeting, AgendaItem, TopicParticipant } from '@/src/types';
+import { Meeting, AgendaItem, TopicParticipant, Participant, Topic } from '@/src/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, Play, Pause, SkipForward, SkipBack, 
   RotateCcw, Clock, User, Coffee, Users, 
   Mic, Presentation, MessageCircle, CheckCircle2,
-  AlertCircle, Maximize2, Minimize2, Loader2, Info
+  AlertCircle, Maximize2, Minimize2, Loader2, Info,
+  Settings2, Edit3, Save, X
 } from 'lucide-react';
+import { format, addMinutes, parseISO } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 export default function MeetingRunPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,12 +25,18 @@ export default function MeetingRunPage() {
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [participants, setParticipants] = useState<TopicParticipant[]>([]);
+  const [globalParticipants, setGlobalParticipants] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
   
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isActive, setIsActive] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Inline editing states
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
 
   const fetchMeetingData = useCallback(async () => {
     try {
@@ -33,6 +44,13 @@ export default function MeetingRunPage() {
       const { data: meetingData, error: mError } = await supabase.from('meetings').select('*').eq('id', id).single();
       if (mError) throw mError;
       setMeeting(meetingData);
+
+      if (meetingData.status !== 'in_progress' && meetingData.status !== 'completed') {
+        await supabase.from('meetings').update({ status: 'in_progress' }).eq('id', id);
+      }
+
+      const { data: gParts } = await supabase.from('participants').select('*');
+      if (gParts) setGlobalParticipants(gParts);
 
       const { data: topics, error: tError } = await supabase.from('topics').select('*').eq('meeting_id', id);
       if (tError) throw tError;
@@ -68,6 +86,8 @@ export default function MeetingRunPage() {
 
   useEffect(() => {
     fetchMeetingData();
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(interval);
   }, [fetchMeetingData]);
 
   useEffect(() => {
@@ -78,10 +98,7 @@ export default function MeetingRunPage() {
       }, 1000);
     } else if (timeLeft === 0 && isActive) {
       setIsActive(false);
-      toast.info('Tempo esgotado!', {
-        description: 'Deseja avançar para o próximo item?',
-        action: { label: 'Avançar', onClick: () => handleNext() }
-      });
+      toast.info('Tempo esgotado!');
     }
     return () => clearInterval(interval);
   }, [isActive, timeLeft]);
@@ -99,7 +116,9 @@ export default function MeetingRunPage() {
       setIsActive(true);
     } else {
       setIsActive(false);
-      toast.success('Reunião finalizada com sucesso!');
+      supabase.from('meetings').update({ status: 'completed' }).eq('id', id).then(() => {
+        toast.success('Reunião finalizada!');
+      });
     }
   };
 
@@ -112,11 +131,51 @@ export default function MeetingRunPage() {
     }
   };
 
-  const handleRestart = () => {
-    if (confirm('Deseja realmente reiniciar a reunião do início?')) {
-      setCurrentIndex(0);
-      setTimeLeft(items[0].duration_minutes * 60);
-      setIsActive(false);
+  const startEditing = (field: string, value: string) => {
+    setEditingField(field);
+    setEditValue(value);
+  };
+
+  const saveEdit = async () => {
+    if (!editingField || !currentItem) return;
+    
+    try {
+      const updates: any = {};
+      const currentItemType = currentItem.type;
+      const table = currentItemType === 'topic' ? 'topics' : 'breaks';
+
+      if (editingField === 'title') updates.title = editValue;
+      if (editingField === 'time') updates.duration_minutes = parseInt(editValue);
+      if (editingField === 'presenter') {
+        const p = globalParticipants.find(gp => gp.name === editValue);
+        updates.presenter_id = p?.id || null;
+        updates.presenter_name = editValue;
+      }
+
+      const { error } = await supabase.from(table).update(updates).eq('id', currentItem.id);
+      
+      // Resilience fallback for schema updates
+      if (error && error.message.includes('column') && error.message.includes('not found')) {
+        const fallback = { ...updates };
+        if (table === 'topics') {
+          delete fallback.presenter_id;
+          delete fallback.presenter_name;
+        }
+        await supabase.from(table).update(fallback).eq('id', currentItem.id);
+      } else if (error) throw error;
+
+      setItems(prev => prev.map((item, idx) => 
+        idx === currentIndex ? { ...item, ...updates } : item
+      ));
+
+      if (editingField === 'time') {
+        setTimeLeft(parseInt(editValue) * 60);
+      }
+
+      setEditingField(null);
+      toast.success('Atualizado');
+    } catch {
+      toast.error('Erro ao atualizar');
     }
   };
 
@@ -132,299 +191,233 @@ export default function MeetingRunPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b1021] text-white p-8">
-        <Loader2 className="h-10 w-10 animate-spin text-primary mb-6" />
-        <p className="text-slate-400 font-mono text-xs uppercase tracking-[0.3em] animate-pulse">Sincronizando Sessão...</p>
-      </div>
-    );
-  }
-
-  const currentItem = items[currentIndex];
-  if (!currentItem) return null;
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const progress = ((currentItem.duration_minutes * 60 - timeLeft) / (currentItem.duration_minutes * 60)) * 100;
-  const isCrtitcal = timeLeft > 0 && timeLeft < 60;
+  const currentItem = items[currentIndex];
+  if (loading || !currentItem) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b1021] text-white p-8">
+        <Loader2 className="h-10 w-10 animate-spin text-primary mb-6" />
+        <p className="text-slate-400 font-mono text-xs uppercase tracking-[0.3em]">Carregando Execução...</p>
+      </div>
+    );
+  }
+
+  const overallProgress = ((currentIndex) / items.length) * 100;
+  const isCritical = timeLeft > 0 && timeLeft < 60;
   const currentParticipants = participants.filter(p => p.topic_id === currentItem.id);
 
   return (
-    <div className="min-h-screen bg-[#0b1021] text-white flex flex-col selection:bg-primary/30 selection:text-primary overflow-hidden">
-      {/* Dynamic Background Gradient */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <motion.div 
-          animate={{ scale: isActive ? [1, 1.1, 1] : 1, opacity: isCrtitcal ? [0.1, 0.2, 0.1] : 0.1 }}
-          transition={{ duration: 10, repeat: Infinity }}
-          className={`absolute -top-1/2 -left-1/2 w-full h-full rounded-full blur-[160px] transition-colors duration-1000 ${isCrtitcal ? 'bg-destructive' : 'bg-primary'}`} 
-        />
-      </div>
-
+    <div className="min-h-screen bg-[#0b1021] text-white flex flex-col overflow-hidden">
       <header className="h-20 bg-white/5 border-b border-white/10 px-8 flex items-center justify-between backdrop-blur-xl relative z-20">
         <div className="flex items-center gap-6">
           <Button 
             variant="ghost" 
             size="icon" 
             onClick={() => navigate(`/meeting/${id}`)}
-            className="text-slate-400 hover:text-white hover:bg-white/10 rounded-xl"
+            className="text-slate-400 hover:text-white hover:bg-white/10"
           >
             <ArrowLeft size={20} />
           </Button>
-          <div className="space-y-1">
-            <h1 className="text-lg font-bold tracking-tight max-w-[200px] sm:max-w-md truncate">{meeting?.title}</h1>
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-none">Modo Executivo</span>
-            </div>
+          <div className="flex flex-col">
+            <h1 className="text-sm font-bold truncate max-w-[200px]">{meeting?.title}</h1>
+            <span className="text-[10px] text-primary uppercase font-black tracking-widest leading-none">
+              {format(currentTime, 'HH:mm')} • {format(currentTime, 'EEEE, d MMM', { locale: ptBR })}
+            </span>
           </div>
         </div>
 
+        <div className="flex-1 max-w-md mx-8 hidden md:block">
+          <div className="flex items-center justify-between mb-1.5 px-1">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Progresso Geral</span>
+            <span className="text-[10px] font-bold text-primary">{Math.round(overallProgress)}%</span>
+          </div>
+          <Progress value={overallProgress} className="h-1.5 bg-white/5" />
+        </div>
+
         <div className="flex items-center gap-4">
-           <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 flex items-center gap-3">
-             <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest hidden sm:block">Progresso</div>
-             <div className="text-sm font-mono font-bold text-primary">
-               {currentIndex + 1} <span className="text-slate-600 mx-1">/</span> {items.length}
-             </div>
-           </div>
-           <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-slate-500 hover:text-white hover:bg-white/10 rounded-xl">
+           <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-slate-500 hover:text-white hover:bg-white/10">
              {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
            </Button>
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden relative z-10">
-        <div className="flex-1 flex flex-col p-8 lg:p-16">
-          <div className="max-w-5xl mx-auto w-full h-full flex flex-col">
+      <main className="flex-1 flex overflow-hidden">
+        {/* Navigation Sidebar */}
+        <aside className="w-80 bg-black/40 border-r border-white/10 p-6 overflow-y-auto hidden lg:flex flex-col gap-6">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Próximos Passos</h3>
+          <div className="space-y-3">
+            {items.map((item, idx) => {
+              const isCurrent = idx === currentIndex;
+              return (
+                <div 
+                  key={item.id}
+                  onClick={() => {
+                    setCurrentIndex(idx);
+                    setTimeLeft(item.duration_minutes * 60);
+                    setIsActive(false);
+                  }}
+                  className={`p-4 rounded-2xl cursor-pointer border transition-all ${
+                    isCurrent 
+                      ? 'bg-primary border-primary text-[#0b1021] shadow-lg shadow-primary/20' 
+                      : 'bg-white/5 border-transparent opacity-40 hover:opacity-100 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-60">
+                    {idx + 1}. {item.type === 'topic' ? 'Tópico' : 'Pausa'}
+                  </div>
+                  <div className="text-sm font-bold truncate leading-tight">{item.title}</div>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="flex-1 flex flex-col p-8 lg:p-12 relative items-center justify-center">
+          {/* Main Display */}
+          <div className="max-w-4xl w-full space-y-12 text-center items-center flex flex-col">
             <AnimatePresence mode="wait">
               <motion.div 
                 key={currentIndex}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 1.05 }}
-                transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                className="flex-1 flex flex-col justify-center items-center text-center space-y-12"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8 w-full"
               >
-                <div className="space-y-6 max-w-4xl">
-                  <div className={`inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full border shadow-sm ${
-                    currentItem.type === 'topic' ? 'bg-primary/10 border-primary/20 text-primary' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
-                  }`}>
-                    {currentItem.type === 'topic' ? <Mic size={14} /> : <Coffee size={14} />}
-                    <span className="text-[10px] font-black uppercase tracking-[0.25em]">
-                      {currentItem.type === 'topic' ? 'Tópico em Foco' : 'Intervalo Programado'}
-                    </span>
-                  </div>
-                  
-                  <h2 className="text-5xl lg:text-8xl font-black tracking-tighter leading-[1.05] drop-shadow-2xl">
-                    {currentItem.title}
-                  </h2>
+                {/* Topic Info */}
+                <div className="space-y-4">
+                  {editingField === 'title' ? (
+                    <div className="flex items-center justify-center gap-2">
+                       <Input 
+                        value={editValue} 
+                        onChange={e => setEditValue(e.target.value)}
+                        autoFocus
+                        className="h-20 text-5xl font-black tracking-tight text-center bg-transparent border-none focus-visible:ring-0"
+                      />
+                      <Button size="icon" variant="ghost" onClick={saveEdit}><Save size={24}/></Button>
+                    </div>
+                  ) : (
+                    <h2 
+                      className="text-6xl lg:text-8xl font-black tracking-tighter leading-tight cursor-pointer hover:text-primary transition-colors"
+                      onClick={() => startEditing('title', currentItem.title)}
+                    >
+                      {currentItem.title}
+                    </h2>
+                  )}
 
                   {currentItem.type === 'topic' && (
-                    <div className="flex items-center justify-center gap-8 pt-4">
-                      <div className="flex items-center gap-4 bg-white/5 border border-white/5 rounded-2xl px-6 py-4 backdrop-blur-md shadow-2xl">
-                        <div className="h-14 w-14 rounded-2xl bg-primary flex items-center justify-center text-xl font-black text-[#0b1021] shadow-lg shadow-primary/20">
-                          {((currentItem as any).presenter?.[0]?.toUpperCase()) || '?'}
-                        </div>
+                    <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
+                      <div 
+                        className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 hover:bg-white/10 transition-all cursor-pointer group"
+                        onClick={() => startEditing('presenter', (currentItem as Topic).presenter_name || '')}
+                      >
+                        <User size={16} className="text-primary" />
                         <div className="text-left">
-                          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Responsável</div>
-                          <div className="text-xl font-bold tracking-tight">{(currentItem as any).presenter || 'Não Definido'}</div>
+                          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Apresentador</div>
+                          {editingField === 'presenter' ? (
+                            <input 
+                              value={editValue} 
+                              onChange={e => setEditValue(e.target.value)}
+                              onBlur={saveEdit}
+                              autoFocus
+                              className="bg-transparent border-none text-sm font-bold focus:ring-0 outline-none w-32"
+                              list="run-presenters"
+                            />
+                          ) : (
+                            <div className="text-sm font-bold">{(currentItem as Topic).presenter_name || 'Ninguém'}</div>
+                          )}
+                          <datalist id="run-presenters">
+                             {globalParticipants.map(gp => <option key={gp.id} value={gp.name} />)}
+                          </datalist>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
+                        <Users size={16} className="text-primary" />
+                        <div className="text-left">
+                          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Participantes</div>
+                          <div className="text-sm font-bold truncate max-w-[150px]">
+                            {currentParticipants.length > 0 ? (
+                              currentParticipants.map(p => p.participant_name).join(', ')
+                            ) : 'Apenas apresentador'}
+                          </div>
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div className="flex flex-col items-center gap-12 w-full">
-                   <div className={`text-[12rem] lg:text-[18rem] font-mono leading-none tracking-tighter tabular-nums ${isCrtitcal ? 'text-destructive font-black animate-[pulse_1s_infinite]' : 'font-bold text-white shadow-primary/10'}`}>
-                      {formatTime(timeLeft)}
-                   </div>
-
-                   <div className="w-full max-w-3xl space-y-6">
-                     <Progress value={progress} className={`h-2.5 bg-white/5 ${isCrtitcal ? 'text-destructive' : 'text-primary'}`} />
-                     <div className="flex justify-between px-2 font-mono text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">
-                        <span>Ponto Zero</span>
-                        <span className={`transition-colors ${isCrtitcal ? 'text-destructive' : 'text-primary'}`}>
-                          {currentItem.duration_minutes}m Progamados
-                        </span>
-                        <span>Checkpoint</span>
-                     </div>
-                   </div>
+                {/* Timer Section */}
+                <div className="flex flex-col items-center">
+                  <div 
+                    className={`text-[12rem] lg:text-[16rem] font-mono leading-none tracking-tighter tabular-nums cursor-pointer transition-colors ${
+                      isCritical ? 'text-destructive animate-pulse' : isActive ? 'text-white' : 'text-slate-500'
+                    }`}
+                    onClick={() => startEditing('time', Math.ceil(timeLeft / 60).toString())}
+                  >
+                    {editingField === 'time' ? (
+                      <input 
+                        type="number"
+                        value={editValue} 
+                        onChange={e => setEditValue(e.target.value)}
+                        onBlur={saveEdit}
+                        autoFocus
+                        className="bg-transparent border-none text-center focus:ring-0 outline-none w-full"
+                      />
+                    ) : formatTime(timeLeft)}
+                  </div>
+                  
+                  <div className="w-full max-w-2xl mt-4">
+                    <Progress value={((currentItem.duration_minutes * 60 - timeLeft) / (currentItem.duration_minutes * 60)) * 100} className="h-1.5 bg-white/5" />
+                    <div className="flex justify-between mt-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      <span>Início</span>
+                      <span className="text-primary">{currentItem.duration_minutes} min total</span>
+                      <span>Final</span>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             </AnimatePresence>
-
-            {/* Float Controls */}
-            <div className="mt-auto py-12 flex flex-col items-center gap-8">
-              <div className="flex items-center gap-8">
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  onClick={handleBack}
-                  disabled={currentIndex === 0}
-                  className="h-16 w-16 rounded-full border border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 active:scale-90 transition-all disabled:opacity-20"
-                >
-                  <SkipBack size={28} />
-                </Button>
-
-                <Button 
-                  onClick={handleTogglePlay}
-                  className={`h-28 w-28 rounded-full shadow-2xl transition-all active:scale-95 group relative overflow-hidden ${
-                    isActive 
-                      ? 'bg-white text-[#0b1021] hover:bg-slate-200' 
-                      : 'bg-primary text-white hover:bg-primary/90'
-                  }`}
-                >
-                   <div className="relative z-10">
-                    {isActive ? <Pause size={48} fill="currentColor" /> : <Play size={48} fill="currentColor" className="ml-2" />}
-                   </div>
-                   {isActive && (
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.5 }}
-                        animate={{ opacity: 0.1, scale: 1.5 }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                        className="absolute inset-0 bg-primary rounded-full"
-                      />
-                   )}
-                </Button>
-
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  onClick={handleNext}
-                  disabled={currentIndex === items.length - 1}
-                  className="h-16 w-16 rounded-full border border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 active:scale-90 transition-all disabled:opacity-20"
-                >
-                  <SkipForward size={28} />
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <Button variant="ghost" size="sm" onClick={handleRestart} className="text-slate-600 hover:text-white text-[10px] uppercase font-black tracking-widest gap-2">
-                  <RotateCcw size={14} /> Reiniciar
-                </Button>
-                <div className="h-1 w-1 rounded-full bg-slate-800" />
-                <Button variant="ghost" size="sm" onClick={() => navigate(`/meeting/${id}`)} className="text-slate-600 hover:text-white text-[10px] uppercase font-black tracking-widest gap-2">
-                  <Settings2 size={14} /> Editar Agenda
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar - Visual Context */}
-        <aside className="w-[400px] bg-black/20 border-l border-white/10 p-12 overflow-y-auto hidden 2xl:flex flex-col gap-10">
-          <div className="space-y-8">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">Fluxo da Agenda</h3>
-              <div className="h-px flex-1 mx-4 bg-white/5" />
-            </div>
-            
-            <div className="space-y-4">
-              {items.map((item, idx) => {
-                const isCurrent = idx === currentIndex;
-                const isPassed = idx < currentIndex;
-                
-                return (
-                  <motion.div 
-                    key={item.id}
-                    onClick={() => {
-                      setCurrentIndex(idx);
-                      setTimeLeft(item.duration_minutes * 60);
-                      setIsActive(false);
-                    }}
-                    className={`relative flex items-center gap-5 p-5 rounded-[1.25rem] transition-all cursor-pointer border group overflow-hidden ${
-                      isCurrent 
-                        ? 'bg-primary border-primary shadow-2xl shadow-primary/20 scale-[1.03] z-10' 
-                        : isPassed
-                          ? 'bg-white/2 border-transparent opacity-25 hover:opacity-50'
-                          : 'bg-white/5 border-white/5 hover:border-white/20'
-                    }`}
-                  >
-                    {isCurrent && (
-                      <motion.div 
-                        layoutId="active-bg"
-                        className="absolute inset-0 bg-primary"
-                        transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
-                      />
-                    )}
-                    
-                    <div className={`relative z-10 w-10 h-10 rounded-xl flex items-center justify-center text-xs font-black shrink-0 ${
-                      isCurrent ? 'bg-white text-primary' : 'bg-white/10 text-slate-400'
-                    }`}>
-                      {isPassed ? <CheckCircle2 size={18} /> : String(idx + 1).padStart(2, '0')}
-                    </div>
-                    
-                    <div className="relative z-10 flex-1 min-w-0">
-                      <h4 className={`text-sm font-bold truncate tracking-tight ${isCurrent ? 'text-[#0b1021]' : 'text-slate-300'}`}>
-                        {item.title}
-                      </h4>
-                      <p className={`text-[9px] font-black uppercase tracking-[0.15em] mt-1.5 ${isCurrent ? 'text-[#0b1021]/60' : 'text-slate-500'}`}>
-                        {item.duration_minutes}m • {item.type === 'topic' ? 'Tópico' : 'Intervalo'}
-                      </p>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
           </div>
 
-          <div className="mt-auto space-y-8">
-            <div className="bg-white/5 border border-white/5 rounded-3xl p-8 relative overflow-hidden group">
-               <div className="absolute top-0 right-0 p-4 text-white/5 group-hover:text-primary/10 transition-colors">
-                  <Users size={80} />
-               </div>
-               <div className="relative z-10 space-y-6">
-                 <h4 className="text-xs font-black uppercase tracking-[0.25em] text-slate-500 flex items-center gap-3">
-                   <Users size={16} /> Painel de Voz
-                 </h4>
-                 {currentParticipants.length > 0 ? (
-                   <div className="flex flex-wrap gap-2.5">
-                     {currentParticipants.map(p => (
-                       <div key={p.id} className="px-4 py-2 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.1em] text-slate-300 hover:border-primary/30 transition-colors">
-                         {p.participant_name}
-                       </div>
-                     ))}
-                   </div>
-                 ) : (
-                   <div className="flex flex-col items-center py-6 border border-dashed border-white/10 rounded-3xl text-slate-600 gap-3">
-                      <div className="p-3 bg-white/5 rounded-2xl">
-                         <Info size={20} />
-                      </div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Nenhum participante <br/> extra definido</p>
-                   </div>
-                 )}
-               </div>
-            </div>
+          {/* Controls Bar */}
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-6 p-4 bg-white/5 border border-white/10 rounded-[2.5rem] backdrop-blur-xl shadow-2xl">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handleBack}
+              disabled={currentIndex === 0}
+              className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
+            >
+              <SkipBack size={24} />
+            </Button>
+
+            <Button 
+              onClick={handleTogglePlay}
+              className={`h-20 w-20 rounded-full shadow-lg ${
+                isActive ? 'bg-white text-[#0b1021]' : 'bg-primary text-white'
+              }`}
+            >
+              {isActive ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
+            </Button>
+
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handleNext}
+              disabled={currentIndex === items.length - 1}
+              className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
+            >
+              <SkipForward size={24} />
+            </Button>
           </div>
-        </aside>
+        </section>
       </main>
     </div>
-  );
-}
-
-function Settings2(props: any) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M20 7h-9" />
-      <path d="M14 17H5" />
-      <circle cx="17" cy="17" r="3" />
-      <circle cx="7" cy="7" r="3" />
-    </svg>
   );
 }
 

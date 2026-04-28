@@ -1,4 +1,5 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import * as React from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
 

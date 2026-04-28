@@ -8,8 +8,16 @@ export interface Meeting {
   is_favorite?: boolean;
   status?: 'planning' | 'in_progress' | 'completed';
   tags?: string[];
-  topics?: (Topic & { topic_participants?: { participant_name: string }[] })[];
+  start_time?: string | null;
+  topics?: (Topic & { topic_participants?: { participant_id: string, participant_name: string }[] })[];
   breaks?: Break[];
+}
+
+export interface Participant {
+  id: string;
+  user_id: string;
+  name: string;
+  email?: string | null;
 }
 
 export interface Topic {
@@ -18,7 +26,8 @@ export interface Topic {
   title: string;
   duration_minutes: number;
   order_index: number;
-  presenter: string | null;
+  presenter_id: string | null;
+  presenter_name: string | null;
   type: 'topic';
 }
 
@@ -34,6 +43,7 @@ export interface Break {
 export interface TopicParticipant {
   id: string;
   topic_id: string;
+  participant_id: string;
   participant_name: string;
 }
 

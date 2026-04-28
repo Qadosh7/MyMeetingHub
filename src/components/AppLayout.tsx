@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import * as React from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -23,7 +24,10 @@ interface AppLayoutProps {
 
 export default function AppLayout({ children }: AppLayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'dark';
+  });
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -31,8 +35,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
     }
   }, [isDark]);
 
