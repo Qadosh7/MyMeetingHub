@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
+  const [newMeetingDate, setNewMeetingDate] = useState(new Date().toISOString().split('T')[0]);
   
   // Search and Filters State
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,6 +103,18 @@ export default function Dashboard() {
 
     // Sorting
     result.sort((a, b) => {
+      // Prioritize event_date
+      const dateA = a.event_date ? new Date(a.event_date).getTime() : Infinity;
+      const dateB = b.event_date ? new Date(b.event_date).getTime() : Infinity;
+      
+      if (dateA !== dateB) return dateA - dateB;
+
+      // Then start_time
+      const timeA = a.start_time ? new Date(a.start_time).getTime() : Infinity;
+      const timeB = b.start_time ? new Date(b.start_time).getTime() : Infinity;
+
+      if (timeA !== timeB) return timeA - timeB;
+
       if (sortBy === 'recent') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       if (sortBy === 'oldest') return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       
@@ -175,6 +188,8 @@ export default function Dashboard() {
             id,
             duration_minutes,
             presenter,
+            presenter_name,
+            presenter_id,
             topic_participants (
               participant_name
             )
@@ -196,7 +211,10 @@ export default function Dashboard() {
   };
 
   const createMeeting = async () => {
-    if (!newMeetingTitle.trim() || !user) return;
+    if (!newMeetingTitle.trim() || !user || !newMeetingDate) {
+      if (!newMeetingDate) toast.error('A data da reunião é obrigatória');
+      return;
+    }
     try {
       const basicPayload = { 
         title: newMeetingTitle, 
@@ -206,7 +224,8 @@ export default function Dashboard() {
       const fullPayload = {
         ...basicPayload,
         status: 'planning',
-        start_time: new Date().toISOString(),
+        event_date: newMeetingDate,
+        start_time: new Date(`${newMeetingDate}T09:00:00`).toISOString(), // Default to 9am on that day
         updated_at: new Date().toISOString()
       };
 
@@ -237,6 +256,7 @@ export default function Dashboard() {
       setMeetings([data, ...meetings]);
       setIsCreateOpen(false);
       setNewMeetingTitle('');
+      setNewMeetingDate(new Date().toISOString().split('T')[0]);
       navigate(`/meeting/${data.id}`);
     } catch (error: any) {
       console.error('Catch error creating meeting:', error);
@@ -334,16 +354,26 @@ export default function Dashboard() {
                 <DialogHeader>
                   <DialogTitle className="text-2xl font-black">Começar Planejamento</DialogTitle>
                 </DialogHeader>
-                <div className="space-y-4 py-8">
+                <div className="space-y-6 py-4">
                   <div className="space-y-3">
-                    <Label htmlFor="title" className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Título da Reunião</Label>
+                    <Label htmlFor="title" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Título da Reunião</Label>
                     <Input
                       id="title"
                       placeholder="Ex: Weekly Team Sync"
-                      className="rounded-2xl h-14 bg-muted/30 border-none px-6 text-lg font-medium focus:bg-background shadow-inner transition-all"
+                      className="rounded-2xl h-12 bg-muted/30 border-none px-6 text-base font-medium focus:bg-background shadow-inner transition-all"
                       value={newMeetingTitle}
                       onChange={(e) => setNewMeetingTitle(e.target.value)}
                       autoFocus
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <Label htmlFor="date" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Data da Reunião</Label>
+                    <Input
+                      id="date"
+                      type="date"
+                      className="rounded-2xl h-12 bg-muted/30 border-none px-6 text-base font-medium focus:bg-background shadow-inner transition-all"
+                      value={newMeetingDate}
+                      onChange={(e) => setNewMeetingDate(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && createMeeting()}
                     />
                   </div>
@@ -626,155 +656,176 @@ export default function Dashboard() {
               meeting.topics?.forEach(t => {
                 t.topic_participants?.forEach(p => participantsSet.add(p.participant_name));
               });
-              const participantCount = participantsSet.size;
+              const participantsList = Array.from(participantsSet);
+              const participantCount = participantsList.length;
 
               const presentersSet = new Set<string>();
               meeting.topics?.forEach(t => {
                 if (t.presenter) presentersSet.add(t.presenter);
+                if (t.presenter_name) presentersSet.add(t.presenter_name);
               });
-              const presenterCount = presentersSet.size;
+              const presentersList = Array.from(presentersSet);
 
-              const isLong = totalDuration > 120;
-              const isShort = totalDuration < 30 && totalDuration > 0;
               const isComplete = meeting.status === 'completed';
-              const isInProgress = meeting.status === 'in_progress';
+
+              // Date & Time Logic
+              const meetingStart = meeting.start_time ? new Date(meeting.start_time) : null;
+              const meetingEnd = meetingStart ? new Date(meetingStart.getTime() + totalDuration * 60000) : null;
+
+              const formatTime = (date: Date) => date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+              const formatDate = (dateStr: string) => {
+                const date = new Date(dateStr + 'T12:00:00'); 
+                const day = date.getDate().toString().padStart(2, '0');
+                const month = date.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+                const capitalizedMonth = month.charAt(0).toUpperCase() + month.slice(1);
+                const year = date.getFullYear();
+                return `${day} ${capitalizedMonth} ${year}`;
+              };
+
+              const getStatusIndicator = () => {
+                if (!meeting.event_date) return { color: 'bg-muted-foreground/30', label: 'Sem data' };
+                const date = new Date(meeting.event_date + 'T00:00:00');
+                const today = new Date();
+                today.setHours(0,0,0,0);
+                
+                const tomorrow = new Date(today);
+                tomorrow.setDate(today.getDate() + 1);
+
+                if (date.getTime() === today.getTime()) return { color: 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]', label: 'Hoje' };
+                if (date.getTime() === tomorrow.getTime()) return { color: 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]', label: 'Amanhã' };
+                if (date.getTime() < today.getTime()) return { color: 'bg-neutral-800', label: 'Passada' };
+                return { color: 'bg-neutral-200 border border-neutral-300', label: 'Futura' };
+              };
+
+              const indicator = getStatusIndicator();
 
               const getRelativeTime = (dateStr: string) => {
                 const date = new Date(dateStr);
                 const now = new Date();
                 const diffTime = Math.abs(now.getTime() - date.getTime());
-                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                const diffMins = Math.floor(diffTime / (1000 * 60));
+                const diffHours = Math.floor(diffMins / 60);
+                const diffDays = Math.floor(diffHours / 24);
                 
-                if (diffDays === 0) return 'Hoje';
-                if (diffDays === 1) return 'Ontem';
-                return `Há ${diffDays} dias`;
+                if (diffMins < 60) return `há ${diffMins}m`;
+                if (diffHours < 24) return `há ${diffHours}h`;
+                if (diffDays === 1) return 'ontem';
+                return `há ${diffDays} dias`;
               };
 
               return (
                 <motion.div
                   key={meeting.id}
                   variants={itemVariants}
-                  whileHover={{ y: -8, scale: 1.01 }}
-                  className="group relative flex flex-col bg-card border border-border/50 rounded-[2.5rem] p-8 transition-all hover:shadow-2xl hover:shadow-primary/10 cursor-pointer overflow-hidden"
+                  whileHover={{ y: -6, scale: 1.01 }}
+                  className="group relative flex flex-col bg-card border border-border/40 rounded-[2rem] p-6 transition-all hover:shadow-2xl hover:shadow-primary/5 cursor-pointer overflow-hidden h-full"
                   onClick={() => {
                     updateLastAccessed(meeting.id);
                     navigate(`/meeting/${meeting.id}`);
                   }}
                 >
-                  {/* Decorative background element */}
-                  <div className="absolute top-0 right-0 w-40 h-40 bg-primary/5 rounded-full -mr-20 -mt-20 transition-transform group-hover:scale-150 duration-700" />
-
-                  <div className="flex justify-between items-start mb-6 relative z-10">
-                    <div className="flex flex-wrap gap-2 pr-12">
-                      {isComplete && (
-                        <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-[10px] font-black uppercase tracking-wider border border-emerald-500/20">
-                          Completa
-                        </span>
-                      )}
-                      {isInProgress && (
-                        <span className="px-3 py-1 rounded-full bg-sky-500/10 text-sky-600 text-[10px] font-black uppercase tracking-wider border border-sky-500/20">
-                          Em progresso
-                        </span>
-                      )}
-                      {meeting.is_favorite && (
-                        <span className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 text-[10px] font-black uppercase tracking-wider border border-amber-500/20 flex items-center gap-1">
-                          <Star size={8} className="fill-current" /> Favorita
-                        </span>
-                      )}
-                      {meeting.tags?.map(tag => (
-                        <span key={tag} className="px-3 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-black uppercase tracking-wider border border-border/50">
-                          {tag}
-                        </span>
-                      ))}
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex flex-col gap-2 flex-1 min-w-0">
+                       <div className="flex items-center gap-2">
+                         <div className={cn("h-2.5 w-2.5 rounded-full shrink-0", indicator.color)} title={indicator.label} />
+                         <h3 className="font-black text-lg leading-tight group-hover:text-primary transition-colors truncate">
+                           {meeting.title}
+                         </h3>
+                       </div>
+                       <div className="flex flex-wrap gap-1.5">
+                         {isComplete ? (
+                           <Badge variant="outline" className="bg-emerald-500/5 text-emerald-600 border-emerald-500/20 text-[9px] h-5 uppercase font-black tracking-tight rounded-lg">Completa</Badge>
+                         ) : (
+                           <Badge variant="outline" className="bg-amber-500/5 text-amber-600 border-amber-500/20 text-[9px] h-5 uppercase font-black tracking-tight rounded-lg">Pendente</Badge>
+                         )}
+                         {meeting.tags?.slice(0, 3).map(tag => (
+                           <Badge key={tag} variant="secondary" className="text-[9px] h-5 uppercase font-bold tracking-tight rounded-lg px-2 bg-muted/50 border-none">{tag}</Badge>
+                         ))}
+                       </div>
                     </div>
                     
-                    <div className="absolute right-0 top-0 flex flex-col gap-2 z-20">
+                    <div className="flex items-center gap-1">
+                      {meeting.is_favorite && <Star size={14} className="fill-amber-500 text-amber-500" strokeWidth={2.5} />}
                       <DropdownMenu>
                         <DropdownMenuTrigger 
                           onClick={(e) => e.stopPropagation()}
-                          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-10 w-10 rounded-2xl hover:bg-muted text-muted-foreground transition-all hover:rotate-90")}
+                          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 rounded-xl hover:bg-muted text-muted-foreground/40 transition-all")}
                         >
-                          <MoreVertical size={18} />
+                          <MoreVertical size={16} />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-2 min-w-[200px] shadow-2xl">
-                          <DropdownMenuItem onClick={() => { updateLastAccessed(meeting.id); navigate(`/meeting/${meeting.id}`); }} className="gap-3 rounded-xl cursor-pointer py-3 font-medium">
-                            <Calendar size={16} className="text-primary" /> Abrir Painel
+                        <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-1.5 shadow-2xl">
+                          <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}`)} className="gap-2 rounded-lg cursor-pointer py-2 text-sm font-semibold">
+                            <Calendar size={14} className="text-primary" /> Abrir Agenda
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => toggleFavorite(e, meeting.id, !!meeting.is_favorite)} className="gap-3 rounded-xl cursor-pointer py-3 font-medium">
-                            <Star size={16} className={meeting.is_favorite ? 'fill-primary text-primary' : ''} /> 
-                            {meeting.is_favorite ? 'Remover Favorito' : 'Favoritar Reunião'}
+                          <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-2 rounded-lg cursor-pointer py-2 text-sm">
+                            <Copy size={14} /> Duplicar
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-3 rounded-xl cursor-pointer py-3 font-medium">
-                            <Copy size={16} /> Duplicar Agenda
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => deleteMeeting(meeting.id)} className="gap-3 rounded-xl cursor-pointer py-3 font-medium text-destructive focus:text-destructive">
-                            <Trash2 size={16} /> Excluir permanentemente
+                          <DropdownMenuItem onClick={() => deleteMeeting(meeting.id)} className="gap-2 rounded-lg cursor-pointer py-2 text-sm text-destructive focus:text-destructive">
+                            <Trash2 size={14} /> Excluir
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
                   </div>
 
-                  <div className="space-y-6 relative z-10 flex-1">
-                    <div className="space-y-2">
-                      <h3 className="font-black text-2xl leading-tight group-hover:text-primary transition-colors line-clamp-2">
-                        {meeting.title}
-                      </h3>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/60 flex items-center gap-2">
-                        <History size={12} />
-                        Atualizado {getRelativeTime(meeting.updated_at || meeting.created_at)}
-                      </p>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4 pt-6 border-t border-border/50">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Clock size={16} className="text-primary/60" />
-                          <span className="text-[10px] font-black uppercase tracking-widest">Duração</span>
-                        </div>
-                        <p className="font-mono font-black text-xl">{totalDuration}m</p>
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Users size={16} className="text-primary/60" />
-                          <span className="text-[10px] font-black uppercase tracking-widest">Membros</span>
-                        </div>
-                        <p className="font-mono font-black text-xl">{participantCount}</p>
-                      </div>
-                    </div>
-
-                    {presenterCount > 0 && (
-                      <div className="flex items-center gap-2 px-4 py-2 bg-muted/40 rounded-xl w-fit border border-border/30">
-                        <User size={12} className="text-muted-foreground" />
-                        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                          {presenterCount} {presenterCount === 1 ? 'Apresentador' : 'Apresentadores'}
-                        </span>
-                      </div>
-                    )}
+                  <div className="bg-muted/30 rounded-2xl p-4 space-y-2 mb-4 group-hover:bg-muted/50 transition-colors">
+                     <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider">
+                       <div className="flex items-center gap-2 text-muted-foreground">
+                         <Calendar size={14} className="text-primary/70" />
+                         <span>{meeting.event_date ? formatDate(meeting.event_date) : 'Sem data definida'}</span>
+                       </div>
+                       <div className="flex items-center gap-2 text-muted-foreground">
+                         <Clock size={14} className="text-primary/70" />
+                         <span>{meetingStart && meetingEnd ? `${formatTime(meetingStart)} - ${formatTime(meetingEnd)}` : '--:--'}</span>
+                       </div>
+                     </div>
                   </div>
 
-                  <div className="mt-8 flex items-center justify-between relative z-10">
-                    <div className="flex -space-x-2.5">
-                      {Array.from(participantsSet).slice(0, 5).map((name, i) => (
-                        <div 
-                          key={i} 
-                          className="h-10 w-10 rounded-full border-[3px] border-card bg-primary/10 flex items-center justify-center text-[11px] font-black text-primary ring-1 ring-border/20 shadow-sm"
-                          title={name}
-                        >
-                          {name.charAt(0).toUpperCase()}
-                        </div>
-                      ))}
-                      {participantCount > 5 && (
-                        <div className="h-10 w-10 rounded-full border-[3px] border-card bg-muted flex items-center justify-center text-[11px] font-black text-muted-foreground ring-1 ring-border/20 shadow-sm">
-                          +{participantCount - 5}
-                        </div>
-                      )}
-                    </div>
+                  <div className="flex items-center justify-between mb-4 px-1">
+                     <div className="flex items-center gap-4">
+                       <div className="flex flex-col">
+                         <span className="text-[9px] font-black uppercase text-muted-foreground/40 tracking-[0.2em]">Duração</span>
+                         <span className="text-sm font-black font-mono leading-none mt-1">{totalDuration}m</span>
+                       </div>
+                       <div className="w-[1px] h-6 bg-border/40" />
+                       <div className="flex flex-col">
+                         <span className="text-[9px] font-black uppercase text-muted-foreground/40 tracking-[0.2em]">Tópicos</span>
+                         <span className="text-sm font-black font-mono leading-none mt-1">{meeting.topics?.length || 0}</span>
+                       </div>
+                     </div>
+                     
+                     <div className="flex -space-x-2 mr-1">
+                       {participantsList.slice(0, 3).map((name, i) => (
+                         <div key={i} className="h-7 w-7 rounded-full border-2 border-background bg-primary/10 flex items-center justify-center text-[9px] font-black text-primary shadow-sm uppercase" title={name}>
+                           {name.charAt(0)}
+                         </div>
+                       ))}
+                       {participantCount > 3 && (
+                         <div className="h-7 w-7 rounded-full border-2 border-background bg-secondary flex items-center justify-center text-[9px] font-black text-muted-foreground shadow-sm">
+                           +{participantCount - 3}
+                         </div>
+                       )}
+                     </div>
+                  </div>
 
-                    <div className="h-12 w-12 rounded-2xl bg-primary flex items-center justify-center text-white shadow-xl shadow-primary/30 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-300">
-                      <Play size={20} className="ml-1 fill-current" />
+                  <div className="mt-auto pt-4 border-t border-border/40 flex items-center justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                       {presentersList.length > 0 && (
+                         <div className="flex items-center gap-1.5 overflow-hidden">
+                           <User size={10} className="text-muted-foreground/40 shrink-0" />
+                           <span className="text-[10px] font-bold text-muted-foreground truncate">
+                             {presentersList.slice(0, 2).join(', ')}{presentersList.length > 2 ? ` +${presentersList.length - 2}` : ''}
+                           </span>
+                         </div>
+                       )}
                     </div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/30 whitespace-nowrap">
+                      {getRelativeTime(meeting.updated_at || meeting.created_at)}
+                    </span>
+                  </div>
+
+                  <div className="absolute bottom-4 right-4 h-9 w-9 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20 opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 pointer-events-none">
+                    <Play size={14} className="ml-0.5 fill-current" />
                   </div>
                 </motion.div>
               );

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'planning',
+    event_date DATE,
     start_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -16,6 +17,9 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='status') THEN
         ALTER TABLE meetings ADD COLUMN status TEXT NOT NULL DEFAULT 'planning';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='event_date') THEN
+        ALTER TABLE meetings ADD COLUMN event_date DATE;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meetings' AND column_name='start_time') THEN
         ALTER TABLE meetings ADD COLUMN start_time TIMESTAMP WITH TIME ZONE DEFAULT NOW();

@@ -454,6 +454,20 @@ export default function MeetingPage() {
     }
   };
 
+  const updateMeetingDate = async (newDate: string) => {
+    try {
+      const { error } = await supabase
+        .from('meetings')
+        .update({ event_date: newDate })
+        .eq('id', id);
+      if (error) throw error;
+      setMeeting(prev => prev ? { ...prev, event_date: newDate } : null);
+      toast.success('Data atualizada');
+    } catch (error) {
+      toast.error('Erro ao atualizar data');
+    }
+  };
+
   const updateMeetingTitle = async () => {
     if (!titleInput.trim() || titleInput === meeting?.title) {
       setIsEditingTitle(false);
@@ -689,6 +703,16 @@ export default function MeetingPage() {
                 </Badge>
               )}
               <div className="flex items-center gap-2 px-3 py-1 bg-muted/50 rounded-full border border-border/50">
+                <Calendar size={12} className="text-muted-foreground" />
+                <input 
+                  type="date" 
+                  value={meeting?.event_date || ''}
+                  onChange={(e) => updateMeetingDate(e.target.value)}
+                  className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest outline-none focus:text-primary transition-colors cursor-pointer"
+                  title="Data da Reunião"
+                />
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1 bg-muted/50 rounded-full border border-border/50">
                 <Clock size={12} className="text-muted-foreground" />
                 <input 
                   type="time" 
@@ -706,8 +730,8 @@ export default function MeetingPage() {
                   title="Horário de Início"
                 />
               </div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 flex items-center gap-2">
-                <Calendar size={12} />
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 hidden md:flex items-center gap-2">
+                <History size={12} />
                 Criada em {new Date(meeting?.created_at || '').toLocaleDateString('pt-BR')}
               </span>
             </div>
