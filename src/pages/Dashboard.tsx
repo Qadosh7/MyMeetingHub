@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play, Star, Tag, Filter, X, ChevronDown, ListFilter, SortAsc, LayoutGrid, CheckCircle2, History } from 'lucide-react';
+import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play, Star, Tag, Filter, X, ChevronDown, ListFilter, SortAsc, LayoutGrid, CheckCircle2, History, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
@@ -920,10 +920,13 @@ export default function Dashboard() {
                                 <MoreVertical size={18} />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-2 shadow-2xl min-w-[180px]">
-                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold">
-                                  <ListFilter size={16} className="text-primary" /> Editar Pauta
+                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}/report`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold text-primary bg-primary/5">
+                                  <TrendingUp size={16} /> Ver Relatório
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => navigate(`/run/${meeting.id}`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold text-primary bg-primary/5">
+                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold">
+                                  <ListFilter size={16} /> Editar Pauta
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}/run`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold">
                                   <Play size={16} /> Iniciar Reunião
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm">
@@ -1019,7 +1022,7 @@ export default function Dashboard() {
                           <h3 className="text-white font-black text-xl mb-2 px-8 text-center">{meeting.title}</h3>
                           <div className="flex flex-col w-full px-12 gap-3">
                             <Button 
-                              onClick={(e) => { e.stopPropagation(); navigate(`/run/${meeting.id}`); }}
+                              onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}
                               className="w-full rounded-2xl h-12 gap-3 bg-white text-primary hover:bg-white/90 font-black shadow-2xl"
                             >
                               <Play size={18} className="fill-current" /> Começar Agora

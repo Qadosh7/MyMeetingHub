@@ -14,8 +14,9 @@ import {
   Mic, Presentation, MessageCircle, CheckCircle2,
   AlertCircle, Maximize2, Minimize2, Loader2, Info,
   Settings2, Edit3, Save, X, GripVertical, Lock, Unlock,
-  Plus, Minus, ChevronUp, ChevronDown
+  Plus, Minus, ChevronUp, ChevronDown, Star
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { format, addMinutes, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -214,11 +215,42 @@ export default function MeetingRunPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState<number | null>(null);
+  const [lastActionMessage, setLastActionMessage] = useState<string | null>(null);
+  const [topicAdjustments, setTopicAdjustments] = useState({ minutes: 0, count: 0, skipped: false });
 
   // Precision Timer Refs
   const startTimeRef = useRef<number | null>(null);
   const initialTimeLeftRef = useRef<number>(0);
-  const executionLogs = useRef<Record<string, { planned: number; actual: number }>>({});
+  const topicStartWallTimeRef = useRef<string>(new Date().toISOString());
+
+  const saveLog = async (item: AgendaItem, startedAt: string, wasSkipped = false) => {
+    try {
+      const endedAt = new Date().toISOString();
+      const planned = item.duration_minutes;
+      // timeLeft is in seconds. actualDuration in minutes.
+      const actual = wasSkipped ? 0 : planned - (timeLeft / 60);
+      const exceeded = !wasSkipped && timeLeft < 0 ? Math.abs(timeLeft / 60) : 0;
+
+      await supabase.from('meeting_execution_logs').insert([{
+        meeting_id: id,
+        topic_id: item.id,
+        topic_type: item.type,
+        planned_duration: planned,
+        actual_duration: Math.max(0, actual),
+        exceeded_time: exceeded,
+        started_at: startedAt,
+        ended_at: endedAt,
+        skipped: wasSkipped,
+        time_adjustments: topicAdjustments.minutes,
+        adjustment_count: topicAdjustments.count
+      }]);
+      
+      // Reset adjustments for next topic
+      setTopicAdjustments({ minutes: 0, count: 0, skipped: false });
+    } catch (error) {
+      console.error('Error saving execution log:', error);
+    }
+  };
 
   // Alert tracking to prevent repeat sounds
   const playState = useRef<{ warning: boolean; critical: boolean; exceeded: boolean }>({
@@ -382,18 +414,7 @@ export default function MeetingRunPage() {
     playState.current = { warning: false, critical: false, exceeded: false };
     startTimeRef.current = null;
     setAutoAdvanceCountdown(null);
-    
-    // Log execution
-    if (items[currentIndex]) {
-      const prevItem = items[currentIndex - 1];
-      if (prevItem) {
-        // Simple log for now
-        executionLogs.current[prevItem.id] = {
-          planned: prevItem.duration_minutes,
-          actual: prevItem.duration_minutes - (timeLeft / 60)
-        };
-      }
-    }
+    topicStartWallTimeRef.current = new Date().toISOString();
   }, [currentIndex]);
 
   const handleTogglePlay = () => {
@@ -401,23 +422,95 @@ export default function MeetingRunPage() {
     setIsActive(!isActive);
   };
 
-  const handleNext = () => {
+  const handleNext = async (skipped = false) => {
     if (currentIndex < items.length - 1) {
+      const currentItem = items[currentIndex];
+      const startedAt = topicStartWallTimeRef.current;
+      await saveLog(currentItem, startedAt, skipped);
+
       const nextIdx = currentIndex + 1;
       setCurrentIndex(nextIdx);
       setTimeLeft(items[nextIdx].duration_minutes * 60);
       setIsActive(true);
       playState.current = { warning: false, critical: false, exceeded: false };
+      if (skipped) showActionFeedback('Tópico Pulado');
     } else {
       setIsActive(false);
+      const currentItem = items[currentIndex];
+      const startedAt = topicStartWallTimeRef.current;
+      await saveLog(currentItem, startedAt, skipped);
+
       supabase.from('meetings').update({ status: 'completed' }).eq('id', id).then(() => {
         toast.success('Reunião finalizada!');
+        navigate(`/meeting/${id}/report`);
       });
     }
   };
 
-  const handleBack = () => {
+  const handleAdjustTimeQuick = (minutes: number) => {
+    const secondsToAdd = minutes * 60;
+    setTimeLeft(prev => {
+      // Re-sync the reference timer if active
+      if (isActive && startTimeRef.current) {
+         initialTimeLeftRef.current += secondsToAdd;
+      }
+      return prev + secondsToAdd;
+    });
+    
+    setTopicAdjustments(prev => ({
+      minutes: prev.minutes + minutes,
+      count: prev.count + 1,
+      skipped: false
+    }));
+    
+    showActionFeedback(minutes > 0 ? `+${minutes} min` : `${minutes} min`);
+  };
+
+  const showActionFeedback = (message: string) => {
+    setLastActionMessage(message);
+    setTimeout(() => setLastActionMessage(null), 2000);
+  };
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          handleTogglePlay();
+          break;
+        case 'ArrowRight':
+          handleNext();
+          break;
+        case 'ArrowLeft':
+          handleBack();
+          break;
+        case 's':
+        case 'S':
+          handleNext(true); // Skip
+          break;
+        case '+':
+          handleAdjustTimeQuick(5);
+          break;
+        case '-':
+          handleAdjustTimeQuick(-2);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isActive, timeLeft, currentIndex, items.length]);
+
+  const handleBack = async () => {
     if (currentIndex > 0) {
+      const currentItem = items[currentIndex];
+      const startedAt = topicStartWallTimeRef.current;
+      await saveLog(currentItem, startedAt);
+
       const prevIdx = currentIndex - 1;
       setCurrentIndex(prevIdx);
       setTimeLeft(items[prevIdx].duration_minutes * 60);
@@ -811,10 +904,27 @@ export default function MeetingRunPage() {
                         <Users size={16} className="text-primary" />
                         <div className="text-left">
                           <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Participantes</div>
-                          <div className="text-sm font-bold truncate max-w-[150px]">
+                          <div className="flex flex-wrap gap-1 mt-1">
                             {currentParticipants.length > 0 ? (
-                              currentParticipants.map(p => p.participant_name).join(', ')
-                            ) : 'Apenas apresentador'}
+                              currentParticipants
+                                .sort((a, b) => {
+                                  if (a.role === 'required' && b.role === 'optional') return -1;
+                                  if (a.role === 'optional' && b.role === 'required') return 1;
+                                  return 0;
+                                })
+                                .map(p => (
+                                <Badge 
+                                  key={p.id} 
+                                  variant="outline" 
+                                  className={`text-[10px] h-5 px-2 border-primary/20 ${p.role === 'required' ? 'bg-primary/10 text-primary font-bold border-primary/40' : 'text-slate-400 border-white/5'}`}
+                                >
+                                  {p.role === 'required' && <Star size={8} className="mr-1 fill-current" />}
+                                  {p.participant_name}
+                                </Badge>
+                              ))
+                            ) : (
+                              <span className="text-sm font-bold text-slate-500">Apenas apresentador</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -867,45 +977,90 @@ export default function MeetingRunPage() {
           </div>
 
           {/* Controls Bar */}
-          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-6 p-4 bg-[#1a1f33]/80 border border-white/10 rounded-[2.5rem] backdrop-blur-xl shadow-2xl">
-            <Button 
-               variant="ghost" 
-               size="icon" 
-               onClick={resetTimer}
-               className="h-14 w-14 rounded-full text-slate-400 hover:text-white hover:bg-white/10"
-               title="Resetar tempo"
-             >
-               <RotateCcw size={20} />
-            </Button>
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 w-fit animate-in fade-in slide-in-from-bottom-5 duration-700">
+            {/* Feedback Message */}
+            <AnimatePresence>
+              {lastActionMessage && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="px-4 py-2 bg-primary text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-2xl"
+                >
+                  {lastActionMessage}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleBack}
-              disabled={currentIndex === 0}
-              className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
-            >
-              <SkipBack size={24} />
-            </Button>
+            {/* Facilitator Commands */}
+            <div className="flex items-center gap-2 p-2 bg-white/5 border border-white/10 rounded-2xl backdrop-blur-md">
+                   <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => handleAdjustTimeQuick(-2)}
+                    className="h-9 px-3 rounded-xl text-[10px] font-black text-slate-400 hover:text-white"
+                   >
+                     -2 MIN
+                   </Button>
+                   <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => handleAdjustTimeQuick(5)}
+                    className="h-9 px-3 rounded-xl text-[10px] font-black text-slate-400 hover:text-white"
+                   >
+                     +5 MIN
+                   </Button>
+                   <div className="w-[1px] h-4 bg-white/10 mx-1" />
+                   <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => handleNext(true)}
+                    className="h-9 px-3 rounded-xl text-[10px] font-black text-amber-500 hover:bg-amber-500/10"
+                   >
+                     PULAR TÓPICO
+                   </Button>
+            </div>
 
-            <Button 
-              onClick={handleTogglePlay}
-              className={`h-20 w-20 rounded-full shadow-lg transition-all active:scale-95 ${
-                isActive ? 'bg-amber-500 text-black hover:bg-amber-600' : 'bg-primary text-black hover:bg-primary/90'
-              }`}
-            >
-              {isActive ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
-            </Button>
+            <div className="flex items-center gap-6 p-4 bg-[#1a1f33]/90 border border-white/10 rounded-[2.5rem] backdrop-blur-xl shadow-2xl">
+              <Button 
+                 variant="ghost" 
+                 size="icon" 
+                 onClick={resetTimer}
+                 className="h-14 w-14 rounded-full text-slate-400 hover:text-white hover:bg-white/10"
+                 title="Resetar tempo"
+               >
+                 <RotateCcw size={20} />
+              </Button>
 
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleNext}
-              disabled={currentIndex === items.length - 1}
-              className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
-            >
-              <SkipForward size={24} />
-            </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={handleBack}
+                disabled={currentIndex === 0}
+                className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
+              >
+                <SkipBack size={24} />
+              </Button>
+
+              <Button 
+                onClick={handleTogglePlay}
+                className={`h-20 w-20 rounded-full shadow-lg transition-all active:scale-95 ${
+                  isActive ? 'bg-amber-500 text-black hover:bg-amber-600' : 'bg-primary text-black hover:bg-primary/90'
+                }`}
+              >
+                {isActive ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
+              </Button>
+
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => handleNext(false)}
+                disabled={currentIndex === items.length - 1}
+                className="h-14 w-14 rounded-full hover:bg-white/10 disabled:opacity-20"
+              >
+                <SkipForward size={24} />
+              </Button>
+            </div>
           </div>
         </section>
       </main>

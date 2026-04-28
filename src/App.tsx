@@ -5,6 +5,7 @@ import AuthPage from './pages/AuthPage';
 import Dashboard from './pages/Dashboard';
 import MeetingPage from './pages/MeetingPage';
 import MeetingRunPage from './pages/MeetingRunPage';
+import MeetingReport from './pages/MeetingReport';
 import { Toaster } from '@/components/ui/sonner';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -62,6 +63,16 @@ export default function App() {
             element={
               <PrivateRoute>
                 <MeetingRunPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/meeting/:id/report"
+            element={
+              <PrivateRoute>
+                <AppLayout>
+                  <MeetingReport />
+                </AppLayout>
               </PrivateRoute>
             }
           />

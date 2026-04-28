@@ -44,8 +44,34 @@ export interface Break {
 export interface TopicParticipant {
   id: string;
   topic_id: string;
-  participant_id: string;
-  participant_name: string;
+  participant_id?: string;
+  participant_name?: string;
+  meeting_participant_id: string;
+  role: 'required' | 'optional';
+  created_at?: string;
+}
+
+export interface MeetingParticipant {
+  id: string;
+  meeting_id: string;
+  name: string;
+  email?: string | null;
+  created_at: string;
+}
+
+export interface MeetingExecutionLog {
+  id: string;
+  meeting_id: string;
+  topic_id: string;
+  topic_type: 'topic' | 'break';
+  planned_duration: number;
+  actual_duration: number;
+  exceeded_time: number;
+  started_at: string;
+  ended_at: string;
+  skipped?: boolean;
+  time_adjustments?: number;
+  adjustment_count?: number;
 }
 
 export type AgendaItem = (Topic | Break) & { type: 'topic' | 'break' };

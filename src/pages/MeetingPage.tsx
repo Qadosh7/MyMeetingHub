@@ -3,8 +3,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/hooks/useAuth';
-import { Meeting, Topic, Break, AgendaItem, TopicParticipant, Participant } from '@/src/types';
-import { Button } from '@/components/ui/button';
+import { Meeting, Topic, Break, AgendaItem, TopicParticipant, Participant, MeetingParticipant } from '@/src/types';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
@@ -14,10 +14,12 @@ import {
   Users, User, Coffee, Save, ChevronDown, ChevronUp, ChevronRight, 
   Utensils, Mic, Presentation, MessageCircle, Play,
   Settings2, LayoutList, Share2, MoreHorizontal, Loader2, Sparkles,
-  ChevronLeft, Tag as TagIcon, Calendar, History, Star, X
+  ChevronLeft, Tag as TagIcon, Calendar, History, Star, X, Check, Search, UserPlus, Minus
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 import {
   DndContext,
@@ -27,6 +29,10 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
+  DragOverEvent,
+  useDroppable,
+  useDraggable
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -45,18 +51,59 @@ interface SortableAgendaItemProps {
   id: string;
   item: AgendaItem;
   participants: TopicParticipant[];
+  meetingParticipants: MeetingParticipant[];
   onDelete: (id: string, type: 'topic' | 'break') => void | Promise<void>;
   onUpdate: (id: string, type: 'topic' | 'break', updates: any) => void | Promise<void>;
-  onAddParticipant: (topicId: string, participantId: string, name: string) => void | Promise<void>;
+  onAddParticipant: (topicId: string, meetingParticipantId: string) => void | Promise<void>;
   onRemoveParticipant: (id: string) => void | Promise<void>;
+  onToggleRole: (id: string, currentRole: 'required' | 'optional') => void | Promise<void>;
   startTime: string | null | undefined;
   timing?: { start: string, end: string };
   globalParticipants: Participant[];
 }
 
+interface DraggableParticipantProps {
+  participant: MeetingParticipant;
+  onRemove: (id: string) => void | Promise<void>;
+}
+
+const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant, onRemove }) => {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `participant-${participant.id}`,
+    data: { participant }
+  });
+
+  const style = transform ? {
+    transform: CSS.Translate.toString(transform),
+  } : undefined;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center justify-between p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/40 transition-all cursor-grab active:cursor-grabbing group ${isDragging ? 'opacity-50' : ''}`}
+    >
+      <div className="flex items-center gap-2">
+        <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-black text-primary border border-primary/20">
+          {participant.name.charAt(0).toUpperCase()}
+        </div>
+        <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px]">{participant.name}</span>
+      </div>
+      <button 
+        onClick={(e) => { e.stopPropagation(); onRemove(participant.id); }}
+        className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-all"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
 function SortableAgendaItem({ 
-  id, item, participants, onDelete, onUpdate, 
-  onAddParticipant, onRemoveParticipant,
+  id, item, participants, meetingParticipants, onDelete, onUpdate, 
+  onAddParticipant, onRemoveParticipant, onToggleRole,
   startTime, timing, globalParticipants
 }: SortableAgendaItemProps) {
   const {
@@ -76,18 +123,50 @@ function SortableAgendaItem({
 
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({ ...item });
-  const [newParticipant, setNewParticipant] = useState('');
 
   const isTopic = item.type === 'topic';
-  const itemParticipants = isTopic ? participants.filter(p => p.topic_id === item.id) : [];
+  const itemParticipants = useMemo(() => {
+    if (!isTopic) return [];
+    return participants
+      .filter(p => p.topic_id === item.id)
+      .map(p => {
+        const mp = meetingParticipants.find(mp => mp.id === p.meeting_participant_id);
+        return { ...p, name: mp?.name || 'Unknown' };
+      })
+      .sort((a, b) => {
+        if (a.role === 'required' && b.role === 'optional') return -1;
+        if (a.role === 'optional' && b.role === 'required') return 1;
+        return 0;
+      });
+  }, [isTopic, participants, meetingParticipants, item.id]);
+
+  const isHighRisk = useMemo(() => {
+    const requiredCount = itemParticipants.filter(p => p.role === 'required').length;
+    return requiredCount > 5;
+  }, [itemParticipants]);
+
+  const { isOver: isOverPresenter, setNodeRef: presenterRef } = useDroppable({
+    id: `presenter-${item.id}`,
+    data: { role: 'presenter', topicId: item.id }
+  });
+
+  const { isOver: isOverRequired, setNodeRef: requiredRef } = useDroppable({
+    id: `required-${item.id}`,
+    data: { role: 'required', topicId: item.id }
+  });
+
+  const { isOver: isOverOptional, setNodeRef: optionalRef } = useDroppable({
+    id: `optional-${item.id}`,
+    data: { role: 'optional', topicId: item.id }
+  });
 
   const handleSave = () => {
     onUpdate(item.id, item.type, {
       title: editData.title,
       duration_minutes: Math.max(1, Number(editData.duration_minutes)),
       ...(isTopic ? { 
-        presenter_id: (editData as Topic).presenter_id,
-        presenter_name: (editData as Topic).presenter_name 
+        presenter_id: (editData as Topic).presenter_id || null,
+        presenter_name: (editData as Topic).presenter_name || null
       } : {})
     });
     setIsEditing(false);
@@ -136,98 +215,237 @@ function SortableAgendaItem({
         </div>
 
         {/* Content Section */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8">
           {isEditing ? (
-            <div className="space-y-4 py-1">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Input 
-                  value={editData.title} 
-                  onChange={(e) => setEditData({...editData, title: e.target.value})}
-                  className="h-10 rounded-xl bg-muted/30 focus:bg-background border-border/50"
-                  placeholder="Título do item"
-                  autoFocus
-                />
+            <div className="flex-1 space-y-4 py-1">
+              <div className="flex flex-col xl:flex-row gap-4 items-start xl:items-center">
+                <div className="flex-1 w-full space-y-1.5">
+                  <Label className="text-xs font-black uppercase tracking-widest text-muted-foreground/60">Título do Tópico</Label>
+                  <Input 
+                    value={editData.title} 
+                    onChange={(e) => setEditData({...editData, title: e.target.value})}
+                    className="h-10 rounded-xl bg-muted/30 focus:bg-background border-border/50 text-sm font-bold"
+                    placeholder="Ex: Alinhamento de Metas"
+                    autoFocus
+                  />
+                </div>
+                
                 {isTopic && (
-                  <div className="relative flex-1">
-                    <Input 
-                      value={(editData as Topic).presenter_name || ''} 
-                      onChange={(e) => {
-                        const name = e.target.value;
-                        setEditData({...editData, presenter_name: name});
-                      }}
-                      className="h-10 rounded-xl bg-muted/30 focus:bg-background border-border/50"
-                      placeholder="Responsável (Apresentador)"
-                      list={`presenters-${id}`}
-                    />
-                    <datalist id={`presenters-${id}`}>
-                      {globalParticipants.map(gp => (
-                        <option key={gp.id} value={gp.name} />
-                      ))}
-                    </datalist>
+                  <div className="w-full xl:w-[280px] space-y-1.5 shrink-0">
+                    <Label className="text-xs font-black uppercase tracking-widest text-muted-foreground/60">Apresentador</Label>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          className="w-full h-10 justify-between rounded-xl bg-muted/30 border-border/50 text-xs font-medium hover:bg-muted/50"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            { (editData as Topic).presenter_id ? (
+                               <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[8px] font-black text-primary border border-primary/20 shrink-0">
+                                 {(editData as Topic).presenter_name?.charAt(0).toUpperCase()}
+                               </div>
+                            ) : (
+                               <User size={14} className="text-primary/60 shrink-0" />
+                            )}
+                            <span className="truncate">{(editData as Topic).presenter_name || 'Definir apresentador'}</span>
+                          </div>
+                          <ChevronDown size={14} className="opacity-40" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="min-w-[240px] rounded-2xl p-2 shadow-2xl">
+                        <DropdownMenuItem 
+                          className="rounded-xl py-2 px-3 text-xs font-bold gap-2 text-muted-foreground"
+                          onClick={() => setEditData({...editData, presenter_id: null, presenter_name: null})}
+                        >
+                          <User size={14} /> Nenhum (Sem apresentador)
+                        </DropdownMenuItem>
+                        <Separator className="my-1 opacity-50" />
+                        <div className="max-h-[200px] overflow-y-auto px-1 py-1 space-y-1 custom-scrollbar">
+                          {meetingParticipants.length === 0 ? (
+                            <div className="py-4 text-center text-[10px] text-muted-foreground italic">
+                              Adicione pessoas à reunião primeiro
+                            </div>
+                          ) : (
+                            meetingParticipants.map(mp => (
+                              <DropdownMenuItem 
+                                key={mp.id} 
+                                className="rounded-xl py-2.5 px-3 text-xs font-bold gap-3 cursor-pointer"
+                                onClick={() => setEditData({...editData, presenter_id: mp.id, presenter_name: mp.name})}
+                              >
+                                <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-[8px] font-black text-primary border border-primary/20 shrink-0">
+                                  {mp.name.charAt(0).toUpperCase()}
+                                </div>
+                                <span className="truncate">{mp.name}</span>
+                                {(editData as Topic).presenter_id === mp.id && <Check size={14} className="ml-auto text-primary" />}
+                              </DropdownMenuItem>
+                            ))
+                          )}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 )}
               </div>
-              <div className="flex items-center justify-between gap-4">
+
+              <div className="flex items-center justify-between gap-4 pt-2">
                  <div className="flex items-center gap-3">
-                   <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Minutos</Label>
-                   <Input 
-                    type="number"
-                    value={editData.duration_minutes} 
-                    onChange={(e) => setEditData({...editData, duration_minutes: Number(e.target.value)})}
-                    className="h-10 w-24 rounded-xl bg-muted/30 focus:bg-background border-border/50"
-                  />
+                   <Label className="text-xs font-black uppercase tracking-widest text-muted-foreground/60">Duração</Label>
+                   <div className="flex items-center gap-2 bg-muted/30 rounded-xl p-1 border border-border/50">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 rounded-lg"
+                        onClick={() => setEditData({...editData, duration_minutes: Math.max(1, editData.duration_minutes - 5)})}
+                      >
+                        <Minus size={14} />
+                      </Button>
+                      <Input 
+                        type="number"
+                        value={editData.duration_minutes} 
+                        onChange={(e) => setEditData({...editData, duration_minutes: Number(e.target.value)})}
+                        className="h-8 w-14 bg-transparent border-none text-center font-mono font-bold focus-visible:ring-0"
+                      />
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 rounded-lg"
+                        onClick={() => setEditData({...editData, duration_minutes: editData.duration_minutes + 5})}
+                      >
+                        <Plus size={14} />
+                      </Button>
+                   </div>
+                   <span className="text-[10px] text-muted-foreground font-bold">min</span>
                  </div>
                  <div className="flex gap-2">
-                   <Button variant="ghost" size="sm" className="rounded-xl h-10 px-4" onClick={() => setIsEditing(false)}>Cancelar</Button>
-                   <Button size="sm" className="rounded-xl h-10 px-6 font-bold" onClick={handleSave}>Salvar</Button>
+                   <Button variant="ghost" size="sm" className="rounded-xl h-10 px-4 text-xs font-bold" onClick={() => setIsEditing(false)}>Cancelar</Button>
+                   <Button size="sm" className="rounded-xl h-10 px-6 font-bold shadow-lg shadow-primary/20" onClick={handleSave}>Salvar Alterações</Button>
                  </div>
               </div>
             </div>
           ) : (
             <div 
-              className="cursor-pointer group/title flex flex-col h-full justify-center"
+              className="flex-1 min-w-0 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8 cursor-pointer group/title"
               onClick={() => { setIsEditing(true); setEditData({ ...item }); }}
             >
-              <div className="flex items-baseline gap-2">
-                <h4 className={`font-bold text-lg tracking-tight transition-colors truncate ${
-                  isTopic ? 'text-foreground' : 'text-muted-foreground font-medium'
-                }`}>
-                  {timing && (
-                    <span className="mr-3 text-primary font-mono text-sm opacity-60">
-                      {timing.start} - {timing.end}
-                    </span>
+              <div className="flex-1 min-w-0 flex flex-col justify-center py-1">
+                <div className="flex items-baseline gap-2">
+                  <h4 className={`font-bold text-lg tracking-tight transition-colors truncate ${
+                    isTopic ? 'text-foreground' : 'text-muted-foreground font-medium'
+                  }`}>
+                    {timing && (
+                      <span className="mr-3 text-primary font-mono text-sm opacity-60">
+                        {timing.start} - {timing.end}
+                      </span>
+                    )}
+                    {item.title}
+                  </h4>
+                  {!isTopic && <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 px-2 py-0.5 rounded-full border border-border/50">Intervalo</span>}
+                  {isHighRisk && (
+                     <Badge variant="destructive" className="ml-2 h-5 text-[9px] uppercase font-black px-2">Risco Alto: Muitos Obrigatórios</Badge>
                   )}
-                  {item.title}
-                </h4>
-                {!isTopic && <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 px-2 py-0.5 rounded-full border border-border/50">Intervalo</span>}
-              </div>
-              
-              <div className="flex flex-wrap items-center gap-y-2 gap-x-4 mt-2">
+                </div>
                 {isTopic && (
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    <Presentation size={14} className="text-primary/60" />
-                    {(item as Topic).presenter_name || <span className="text-muted-foreground/40 italic">Sem apresentador</span>}
-                  </div>
-                )}
-                
-                {isTopic && itemParticipants.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <Users size={14} className="text-muted-foreground/60 mr-1" />
-                    <div className="flex -space-x-2">
-                      {itemParticipants.slice(0, 3).map(p => (
-                        <div key={p.id} className="h-6 w-6 rounded-full bg-muted border-2 border-background flex items-center justify-center text-[8px] font-bold ring-1 ring-border/30">
-                          {p.participant_name.charAt(0).toUpperCase()}
-                        </div>
-                      ))}
-                      {itemParticipants.length > 3 && (
-                        <div className="h-6 w-6 rounded-full bg-primary/10 border-2 border-background flex items-center justify-center text-[8px] font-bold text-primary ring-1 ring-border/30">
-                          +{itemParticipants.length - 3}
-                        </div>
-                      )}
+                  <div className="mt-3 flex flex-col gap-3">
+                    <div className="flex flex-wrap gap-4">
+                       {/* Required Zone */}
+                       <div 
+                         ref={requiredRef}
+                         className={`flex flex-col gap-1.5 p-2 rounded-2xl border-2 border-dashed transition-all min-w-[140px] ${
+                           isOverRequired ? 'bg-primary/10 border-primary scale-[1.02]' : 'bg-transparent border-transparent'
+                         }`}
+                       >
+                         <div className="flex items-center gap-1.5 mb-1">
+                            <div className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">Obrigatórios</span>
+                         </div>
+                         <div className="flex flex-wrap gap-1.5">
+                           {itemParticipants.filter(p => p.role === 'required').map(p => (
+                            <div 
+                              key={p.id} 
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-primary/10 border-primary/20 text-primary font-bold shadow-sm select-none"
+                            >
+                               <span className="text-[10px] truncate max-w-[80px]">{p.name}</span>
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
+                                 className="p-0.5 rounded-full hover:bg-red-500 hover:text-white transition-all"
+                               >
+                                 <X size={10} />
+                               </button>
+                            </div>
+                           ))}
+                           {itemParticipants.filter(p => p.role === 'required').length === 0 && !isOverRequired && (
+                             <div className="text-[10px] text-muted-foreground/30 font-medium italic py-1 px-2">Vazio</div>
+                           )}
+                         </div>
+                       </div>
+
+                       {/* Optional Zone */}
+                       <div 
+                         ref={optionalRef}
+                         className={`flex flex-col gap-1.5 p-2 rounded-2xl border-2 border-dashed transition-all min-w-[140px] ${
+                           isOverOptional ? 'bg-muted border-muted-foreground/40 scale-[1.02]' : 'bg-transparent border-transparent'
+                         }`}
+                       >
+                         <div className="flex items-center gap-1.5 mb-1">
+                            <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">Opcionais</span>
+                         </div>
+                         <div className="flex flex-wrap gap-1.5">
+                           {itemParticipants.filter(p => p.role === 'optional').map(p => (
+                            <div 
+                              key={p.id} 
+                              className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-muted border-border/50 text-muted-foreground font-bold shadow-sm select-none"
+                            >
+                               <span className="text-[10px] truncate max-w-[80px]">{p.name}</span>
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
+                                 className="p-0.5 rounded-full hover:bg-primary hover:text-white transition-all"
+                               >
+                                 <X size={10} />
+                               </button>
+                            </div>
+                           ))}
+                           {itemParticipants.filter(p => p.role === 'optional').length === 0 && !isOverOptional && (
+                             <div className="text-[10px] text-muted-foreground/30 font-medium italic py-1 px-2">Vazio</div>
+                           )}
+                         </div>
+                       </div>
                     </div>
                   </div>
                 )}
               </div>
+
+              {isTopic && (
+                <div 
+                  ref={presenterRef}
+                  className={`flex-shrink-0 min-w-[200px] lg:border-l lg:pl-8 lg:border-border/30 transition-all rounded-3xl ${
+                    isOverPresenter ? 'bg-primary/10 scale-105 shadow-2xl shadow-primary/20 p-2' : ''
+                  }`}
+                >
+                  <div 
+                    className="flex items-center gap-3 group/pres px-3 py-2 rounded-2xl border border-transparent hover:border-primary/20 hover:bg-primary/5 transition-all w-fit lg:w-full"
+                    onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+                  >
+                    <div className={`h-11 w-11 rounded-2xl flex items-center justify-center border transition-all shadow-md ${
+                      (item as Topic).presenter_id 
+                        ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20 rotate-3 translate-y-[-2px]' 
+                        : 'bg-muted/50 text-muted-foreground border-border/50 border-dashed'
+                    }`}>
+                      {(item as Topic).presenter_id ? (
+                        <span className="text-base font-black">{(item as Topic).presenter_name?.charAt(0).toUpperCase()}</span>
+                      ) : (
+                        <Mic size={22} className="opacity-40" />
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                       <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/40 leading-tight">🎤 Apresentador</span>
+                       <span className={`text-[14px] font-bold truncate max-w-[140px] ${(item as Topic).presenter_id ? 'text-foreground' : 'text-muted-foreground/30 italic font-medium'}`}>
+                         {(item as Topic).presenter_name || 'Arraste para definir'}
+                       </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -274,35 +492,6 @@ function SortableAgendaItem({
             </Button>
           </div>
         </div>
-
-        {/* Inline Add Participant (Bottom Overlay for topics) */}
-        {isTopic && !isEditing && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-card/80 backdrop-blur-sm border border-border/50 rounded-full h-8 px-3 flex items-center gap-2 shadow-xl ring-1 ring-black/5 dark:ring-white/5">
-             <Users size={12} className="text-primary/60" />
-             <input 
-              placeholder="Adicionar pessoa..." 
-              className="bg-transparent border-none outline-none text-[10px] w-24 placeholder:text-muted-foreground/40 font-medium"
-              value={newParticipant}
-              onChange={(e) => setNewParticipant(e.target.value)}
-              list={`all-participants-${id}`}
-              onKeyDown={async (e) => {
-                if (e.key === 'Enter' && newParticipant.trim()) {
-                  // This is a bit tricky since ensureGlobalParticipant is in the parent.
-                  // I'll assume for now SortableAgendaItem can't easily call it unless passed.
-                  // I'll just pass the name and handle it in the parent or use a simple hack.
-                  // BETTER: I'll just change the prop onAddParticipant to handle name search/creation.
-                  onAddParticipant(id, '', newParticipant); // Using name as priority
-                  setNewParticipant('');
-                }
-              }}
-            />
-            <datalist id={`all-participants-${id}`}>
-              {globalParticipants.map(gp => (
-                <option key={gp.id} value={gp.name} />
-              ))}
-            </datalist>
-          </div>
-        )}
       </div>
     </motion.div>
   );
@@ -316,11 +505,15 @@ export default function MeetingPage() {
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [participants, setParticipants] = useState<TopicParticipant[]>([]);
+  const [meetingParticipants, setMeetingParticipants] = useState<MeetingParticipant[]>([]);
   const [globalParticipants, setGlobalParticipants] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [newTag, setNewTag] = useState('');
+  
+  const [participantSearch, setParticipantSearch] = useState('');
+  const [newMPName, setNewMPName] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -397,6 +590,12 @@ export default function MeetingPage() {
 
       const { data: gParts, error: geError } = await supabase.from('participants').select('*');
       if (!geError) setGlobalParticipants(gParts || []);
+
+      const { data: mParts, error: meError } = await supabase
+        .from('meeting_participants')
+        .select('*')
+        .eq('meeting_id', id);
+      if (!meError) setMeetingParticipants(mParts || []);
 
       const { data: topics, error: tError } = await supabase.from('topics').select('*').eq('meeting_id', id);
       if (tError) throw tError;
@@ -554,27 +753,9 @@ export default function MeetingPage() {
     try {
       const dbTable = type === 'topic' ? 'topics' : 'breaks';
       
-      // Handle presenter logic if table exists
-      if (type === 'topic' && updates.presenter_name && !updates.presenter_id) {
-        const global = await ensureGlobalParticipant(updates.presenter_name);
-        if (global) {
-          updates.presenter_id = global.id;
-          updates.presenter_name = global.name;
-        }
-      }
-
       const { error } = await supabase.from(dbTable).update(updates).eq('id', itemId);
       
-      // Fallback if columns are missing
-      if (error && error.message.includes('column') && error.message.includes('not found')) {
-        const fallbackUpdates = { ...updates };
-        if (type === 'topic') {
-          delete fallbackUpdates.presenter_id;
-          delete fallbackUpdates.presenter_name;
-          // Note: In original schema it was just 'presenter'
-        }
-        await supabase.from(dbTable).update(fallbackUpdates).eq('id', itemId);
-      } else if (error) throw error;
+      if (error) throw error;
 
       setItems(items.map(item => item.id === itemId ? { ...item, ...updates } : item));
       toast.success('Agenda atualizada');
@@ -583,40 +764,125 @@ export default function MeetingPage() {
     }
   };
 
-  const addParticipant = async (topicId: string, participantId: string, name: string) => {
+  const addMeetingParticipant = async (name: string) => {
+    if (!name.trim()) return;
     try {
-      let pId = participantId;
-      let pName = name;
-
-      if (!pId && pName) {
-        const global = await ensureGlobalParticipant(pName);
-        if (global) {
-          pId = global.id;
-          pName = global.name;
-        }
-      }
-
-      const payload: any = { 
-        topic_id: topicId, 
-        participant_name: pName 
-      };
-      
-      if (pId) payload.participant_id = pId;
-
-      let { data, error } = await supabase.from('topic_participants').insert([payload]).select();
-      
-      // Fallback if participant_id column missing
-      if (error && error.message.includes('participant_id') && error.message.includes('not found')) {
-        delete payload.participant_id;
-        const fallback = await supabase.from('topic_participants').insert([payload]).select();
-        data = fallback.data;
-        error = fallback.error;
-      }
-
+      const { data, error } = await supabase
+        .from('meeting_participants')
+        .insert([{ meeting_id: id, name, email: '' }])
+        .select()
+        .single();
       if (error) throw error;
-      setParticipants(prev => [...prev, data[0]]);
+      setMeetingParticipants(prev => [...prev, data]);
+      setNewMPName('');
+      toast.success('Participante adicionado à reunião');
+      
+      // Also ensure it exists in global list if not there
+      ensureGlobalParticipant(name);
     } catch (error) {
-      toast.error('Erro ao adicionar participante ao tópico');
+      toast.error('Erro ao adicionar participante');
+    }
+  };
+
+  const removeMeetingParticipant = async (mpId: string) => {
+    try {
+      await supabase.from('meeting_participants').delete().eq('id', mpId);
+      
+      // Update local state and linked topics
+      setMeetingParticipants(prev => prev.filter(p => p.id !== mpId));
+      setParticipants(prev => prev.filter(p => p.meeting_participant_id !== mpId));
+      
+      // Also reset presenter if this person was a presenter
+      setItems(prev => prev.map(item => {
+        if (item.type === 'topic' && item.presenter_id === mpId) {
+          return { ...item, presenter_id: null, presenter_name: null };
+        }
+        return item;
+      }));
+
+      // Persist presenter reset
+      await supabase.from('topics').update({ presenter_id: null, presenter_name: null }).eq('presenter_id', mpId);
+
+      toast.success('Participante removido da reunião');
+    } catch (error) {
+      toast.error('Erro ao remover participante');
+    }
+  };
+
+  const addParticipantToTopic = async (topicId: string, meetingParticipantId: string, role: 'required' | 'optional' = 'optional') => {
+    const existing = participants.find(p => p.topic_id === topicId && p.meeting_participant_id === meetingParticipantId);
+    if (existing) {
+      toast.info('Participante já está neste tópico');
+      return;
+    }
+
+    const mp = meetingParticipants.find(p => p.id === meetingParticipantId);
+    if (!mp) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('topic_participants')
+        .insert([{ 
+          topic_id: topicId, 
+          meeting_participant_id: meetingParticipantId,
+          participant_name: mp.name, // Keep for backward compatibility/constraint
+          role 
+        }])
+        .select()
+        .single();
+      if (error) throw error;
+      setParticipants(prev => [...prev, data]);
+    } catch (error) {
+      console.error('Error adding participant:', error);
+      toast.error('Erro ao vincular participante ao tópico');
+    }
+  };
+
+  const toggleParticipantRole = async (tpId: string, currentRole: 'required' | 'optional') => {
+    const newRole = currentRole === 'required' ? 'optional' : 'required';
+    try {
+      const { error } = await supabase
+        .from('topic_participants')
+        .update({ role: newRole })
+        .eq('id', tpId);
+      if (error) throw error;
+      setParticipants(prev => prev.map(p => p.id === tpId ? { ...p, role: newRole } : p));
+    } catch (error) {
+      toast.error('Erro ao alterar papel');
+    }
+  };
+
+  const removeParticipantFromTopic = async (tpId: string) => {
+    try {
+      await supabase.from('topic_participants').delete().eq('id', tpId);
+      setParticipants(prev => prev.filter(p => p.id !== tpId));
+    } catch (error) {
+      toast.error('Erro ao remover participante do tópico');
+    }
+  };
+
+  const addAllParticipantsToTopic = async (topicId: string, role: 'required' | 'optional') => {
+    const payloads = meetingParticipants
+      .filter(mp => !participants.find(p => p.topic_id === topicId && p.meeting_participant_id === mp.id))
+      .map(mp => ({
+        topic_id: topicId,
+        meeting_participant_id: mp.id,
+        participant_name: mp.name,
+        role
+      }));
+
+    if (payloads.length === 0) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('topic_participants')
+        .insert(payloads)
+        .select();
+      if (error) throw error;
+      setParticipants(prev => [...prev, ...data]);
+      toast.success(`${data.length} participantes adicionados`);
+    } catch (error) {
+      toast.error('Erro ao adicionar todos');
     }
   };
 
@@ -655,9 +921,38 @@ export default function MeetingPage() {
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = items.findIndex(i => i.id === active.id);
-      const newIndex = items.findIndex(i => i.id === over.id);
+    if (!over) return;
+
+    const activeId = String(active.id);
+    const overId = String(over.id);
+
+    // Handle Participant dropped on specific zone
+    if (activeId.startsWith('participant-')) {
+      const participantId = activeId.replace('participant-', '');
+      
+      // Target can be a specific zone: presenter-{topicId}, required-{topicId}, optional-{topicId}
+      if (overId.includes('-')) {
+        const [role, topicId] = overId.split('-');
+        if (role === 'presenter' || role === 'required' || role === 'optional') {
+          handleParticipantDrop(participantId, topicId, role as any);
+          return;
+        }
+      }
+      
+      // Fallback: dropped on the general topic card
+      const topic = items.find(i => i.id === overId && i.type === 'topic');
+      if (topic) {
+        handleParticipantDrop(participantId, overId, 'optional');
+      }
+      return;
+    }
+
+    if (activeId !== overId) {
+      const oldIndex = items.findIndex(i => i.id === activeId);
+      const newIndex = items.findIndex(i => i.id === overId);
+      
+      if (oldIndex === -1 || newIndex === -1) return;
+
       const newArray = arrayMove(items, oldIndex, newIndex);
       setItems(newArray);
       try {
@@ -669,6 +964,45 @@ export default function MeetingPage() {
       } catch (error) {
         toast.error('Erro ao salvar nova ordem');
       }
+    }
+  };
+
+  const handleParticipantDrop = async (mpId: string, topicId: string, role: 'presenter' | 'required' | 'optional') => {
+    try {
+      const mp = meetingParticipants.find(p => p.id === mpId);
+      if (!mp) return;
+
+      if (role === 'presenter') {
+        // Set as presenter
+        await updateItem(topicId, 'topic', { presenter_id: mp.id, presenter_name: mp.name });
+        
+        // Remove from other roles for this topic if present
+        const existing = participants.find(p => p.topic_id === topicId && p.meeting_participant_id === mpId);
+        if (existing) {
+          await removeParticipantFromTopic(existing.id);
+        }
+        toast.success(`${mp.name} é o apresentador`);
+      } else {
+        // Add as required or optional
+        // If they were presenter, clear it
+        const topic = items.find(i => i.id === topicId) as Topic;
+        if (topic && topic.presenter_id === mpId) {
+          await updateItem(topicId, 'topic', { presenter_id: null, presenter_name: null });
+        }
+
+        // Check if they were already in another role for this topic
+        const existing = participants.find(p => p.topic_id === topicId && p.meeting_participant_id === mpId);
+        if (existing) {
+          if (existing.role !== role) {
+             await toggleParticipantRole(existing.id, existing.role as any);
+          }
+        } else {
+          await addParticipantToTopic(topicId, mpId, role);
+        }
+        toast.success(`${mp.name} adicionado como ${role === 'required' ? 'obrigatório' : 'opcional'}`);
+      }
+    } catch (error) {
+      toast.error('Erro ao atribuir papel');
     }
   };
 
@@ -805,32 +1139,36 @@ export default function MeetingPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
-        {/* Main Agenda Section (8/12) */}
-        <div className="lg:col-span-8 space-y-8">
-          <div className="flex items-center justify-between pb-4 border-b border-border/50">
-            <div className="flex items-center gap-4">
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-                Agenda do Dia
-              </h2>
-              <Badge variant="outline" className="rounded-full px-3 py-0.5 font-bold tabular-nums">
-                {items.length} Itens
-              </Badge>
-            </div>
+      <DndContext 
+        sensors={sensors} 
+        collisionDetection={closestCenter} 
+        onDragEnd={handleDragEnd}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+          {/* Main Agenda Section (8/12) */}
+          <div className="lg:col-span-8 space-y-8">
+            <div className="flex items-center justify-between pb-4 border-b border-border/50">
+              <div className="flex items-center gap-4">
+                <h2 className="text-sm font-black uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
+                  Agenda do Dia
+                </h2>
+                <Badge variant="outline" className="rounded-full px-3 py-0.5 font-bold tabular-nums">
+                  {items.length} Itens
+                </Badge>
+              </div>
 
-            <div className="flex items-center gap-1">
-              <div className="flex p-1 bg-muted/40 rounded-2xl border border-border/30">
-                <Button onClick={() => addItem('topic')} variant="ghost" size="sm" className="rounded-xl h-9 text-xs font-bold gap-2 px-4 hover:bg-background hover:shadow-sm transition-all">
-                  <Plus size={16} /> Tópico
-                </Button>
-                <Button onClick={() => addItem('break')} variant="ghost" size="sm" className="rounded-xl h-9 text-xs font-bold gap-2 px-4 hover:bg-background hover:shadow-sm transition-all">
-                  <Plus size={16} /> Pausa
-                </Button>
+              <div className="flex items-center gap-1">
+                <div className="flex p-1 bg-muted/40 rounded-2xl border border-border/30">
+                  <Button onClick={() => addItem('topic')} variant="ghost" size="sm" className="rounded-xl h-9 text-xs font-bold gap-2 px-4 hover:bg-background hover:shadow-sm transition-all">
+                    <Plus size={16} /> Tópico
+                  </Button>
+                  <Button onClick={() => addItem('break')} variant="ghost" size="sm" className="rounded-xl h-9 text-xs font-bold gap-2 px-4 hover:bg-background hover:shadow-sm transition-all">
+                    <Plus size={16} /> Pausa
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
               <div className="space-y-4">
                 {items.length === 0 ? (
@@ -856,10 +1194,12 @@ export default function MeetingPage() {
                       id={item.id}
                       item={item}
                       participants={participants}
+                      meetingParticipants={meetingParticipants}
                       onDelete={deleteItem}
                       onUpdate={updateItem}
-                      onAddParticipant={addParticipant}
-                      onRemoveParticipant={removeParticipant}
+                      onAddParticipant={addParticipantToTopic}
+                      onRemoveParticipant={removeParticipantFromTopic}
+                      onToggleRole={toggleParticipantRole}
                       startTime={meeting?.start_time}
                       timing={itemTimings[index]}
                       globalParticipants={globalParticipants}
@@ -868,23 +1208,22 @@ export default function MeetingPage() {
                 )}
               </div>
             </SortableContext>
-          </DndContext>
-        </div>
+          </div>
 
-        {/* Sidebar Context (4/12) */}
-        <div className="lg:col-span-4 space-y-8">
-          <div className="sticky top-8 space-y-8">
-            {/* Stats Overview */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-6 bg-card border border-border/50 rounded-[2rem] space-y-1">
-                <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tempo Total</p>
-                <p className="text-3xl font-mono font-black tabular-nums">{totalMin}m</p>
+          {/* Sidebar Context (4/12) */}
+          <div className="lg:col-span-4 space-y-8">
+            <div className="sticky top-8 space-y-8">
+              {/* Stats Overview */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-6 bg-card border border-border/50 rounded-[2rem] space-y-1">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tempo Total</p>
+                  <p className="text-3xl font-mono font-black tabular-nums">{totalMin}m</p>
+                </div>
+                <div className="p-6 bg-card border border-border/50 rounded-[2rem] space-y-1">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tópicos</p>
+                  <p className="text-3xl font-mono font-black tabular-nums">{items.filter(i => i.type === 'topic').length}</p>
+                </div>
               </div>
-              <div className="p-6 bg-card border border-border/50 rounded-[2rem] space-y-1">
-                <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Tópicos</p>
-                <p className="text-3xl font-mono font-black tabular-nums">{items.filter(i => i.type === 'topic').length}</p>
-              </div>
-            </div>
 
             {/* Tag Management */}
             <div className="p-8 bg-card border border-border/50 rounded-[2.5rem] space-y-6">
@@ -920,32 +1259,86 @@ export default function MeetingPage() {
               </div>
             </div>
 
-            {/* Participants Summary */}
+            {/* Participants Management */}
             <div className="p-8 bg-card border border-border/50 rounded-[2.5rem] space-y-6">
-              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-                <Users size={14} /> Participantes ({new Set(participants.map(p => p.participant_name)).size})
-              </h3>
-              
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
+                  <Users size={14} /> Participantes da Reunião
+                </h3>
+                <Badge variant="outline" className="rounded-full px-2 py-0 font-bold tabular-nums">
+                  {meetingParticipants.length}
+                </Badge>
+              </div>
+
               <div className="space-y-4">
-                <div className="flex -space-x-3 overflow-hidden">
-                  {Array.from(new Set(participants.map(p => p.participant_name))).slice(0, 8).map((name: any, i) => (
-                    <div 
-                      key={i} 
-                      className="inline-block h-10 w-10 rounded-full ring-4 ring-card bg-primary/10 border border-primary/20 flex items-center justify-center text-[10px] font-black text-primary shadow-sm hover:-translate-y-1 transition-transform"
-                      title={name}
-                    >
-                      {String(name).charAt(0).toUpperCase()}
-                    </div>
-                  ))}
-                  {new Set(participants.map(p => p.participant_name)).size > 8 && (
-                    <div className="inline-block h-10 w-10 rounded-full ring-4 ring-card bg-muted flex items-center justify-center text-[10px] font-black text-muted-foreground shadow-sm">
-                      +{new Set(participants.map(p => p.participant_name)).size - 8}
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40" />
+                  <Input 
+                    placeholder="Buscar participante..."
+                    value={participantSearch}
+                    onChange={(e) => setParticipantSearch(e.target.value)}
+                    className="h-9 pl-9 rounded-xl bg-muted/30 border-none text-xs focus:bg-background"
+                  />
+                </div>
+
+                <div className="max-h-[200px] overflow-y-auto pr-2 space-y-2 custom-scrollbar">
+                  {meetingParticipants
+                    .filter(mp => mp.name.toLowerCase().includes(participantSearch.toLowerCase()))
+                    .map(mp => (
+                      <DraggableParticipant key={mp.id} participant={mp} onRemove={removeMeetingParticipant} />
+                    ))}
+                  
+                  {meetingParticipants.filter(mp => mp.name.toLowerCase().includes(participantSearch.toLowerCase())).length === 0 && (
+                    <div className="py-4 text-center text-[10px] text-muted-foreground italic">
+                      Nenhum participante encontrado
                     </div>
                   )}
                 </div>
-                <p className="text-[10px] text-muted-foreground font-medium leading-relaxed italic">
-                  Os participantes são associados a cada tópico específico da agenda durante o planejamento.
-                </p>
+
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="Novo nome..."
+                    value={newMPName}
+                    onChange={(e) => setNewMPName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addMeetingParticipant(newMPName)}
+                    className="h-9 rounded-xl bg-muted/30 border-none text-xs"
+                  />
+                  <Button 
+                    size="icon" 
+                    className="h-9 w-9 shrink-0 rounded-xl bg-primary/10 text-primary hover:bg-primary/20"
+                    onClick={() => addMeetingParticipant(newMPName)}
+                  >
+                    <UserPlus size={16} />
+                  </Button>
+                </div>
+                
+                <div className="pt-2 border-t border-border/30">
+                   <DropdownMenu>
+                      <DropdownMenuTrigger className={cn(buttonVariants({ variant: "ghost" }), "w-full justify-between h-9 rounded-xl text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-muted")}>
+                         Ações Rápidas <ChevronDown size={14} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-2 shadow-2xl min-w-[200px]">
+                        <DropdownMenuItem 
+                          className="gap-2 rounded-xl cursor-pointer py-3 text-xs font-bold"
+                          onClick={() => {
+                            const currentTopic = items.find(i => i.type === 'topic');
+                            if (currentTopic) addAllParticipantsToTopic(currentTopic.id, 'required');
+                          }}
+                        >
+                          <Star size={14} className="text-primary fill-current" /> Add todos obrigatórios
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          className="gap-2 rounded-xl cursor-pointer py-3 text-xs font-bold"
+                          onClick={() => {
+                            const currentTopic = items.find(i => i.type === 'topic');
+                            if (currentTopic) addAllParticipantsToTopic(currentTopic.id, 'optional');
+                          }}
+                        >
+                          <Minus size={14} /> Add todos opcionais
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                   </DropdownMenu>
+                </div>
               </div>
             </div>
 
@@ -966,11 +1359,11 @@ export default function MeetingPage() {
                   </p>
                </div>
             </div>
+            </div>
           </div>
         </div>
-      </div>
+      </DndContext>
     </div>
   );
-
 }
 

@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS topics (
     title TEXT NOT NULL,
     duration_minutes INTEGER NOT NULL DEFAULT 0,
     order_index INTEGER NOT NULL DEFAULT 0,
-    presenter_id UUID REFERENCES participants(id) ON DELETE SET NULL,
+    presenter_id UUID REFERENCES meeting_participants(id) ON DELETE SET NULL,
     presenter_name TEXT
 );
 
@@ -63,12 +63,19 @@ CREATE TABLE IF NOT EXISTS topics (
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='topics' AND column_name='presenter_id') THEN
-        ALTER TABLE topics ADD COLUMN presenter_id UUID REFERENCES participants(id) ON DELETE SET NULL;
+        ALTER TABLE topics ADD COLUMN presenter_id UUID REFERENCES meeting_participants(id) ON DELETE SET NULL;
+    ELSE
+        -- Update foreign key if it was pointing elsewhere
+        BEGIN
+            ALTER TABLE topics DROP CONSTRAINT IF EXISTS topics_presenter_id_fkey;
+            ALTER TABLE topics ADD CONSTRAINT topics_presenter_id_fkey FOREIGN KEY (presenter_id) REFERENCES meeting_participants(id) ON DELETE SET NULL;
+        EXCEPTION WHEN OTHERS THEN
+            -- Ignore if we can't change FK easily in this env
+        END;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='topics' AND column_name='presenter_name') THEN
         ALTER TABLE topics ADD COLUMN presenter_name TEXT;
     END IF;
-    -- If old 'presenter' column exists, we can keep it for legacy or rename
 END $$;
 
 -- 4. Topic Participants Table (Junction with name fallback)
@@ -95,6 +102,58 @@ CREATE TABLE IF NOT EXISTS breaks (
     duration_minutes INTEGER NOT NULL DEFAULT 15,
     order_index INTEGER NOT NULL DEFAULT 0
 );
+
+-- 6. Meeting Execution Logs Table
+CREATE TABLE IF NOT EXISTS meeting_execution_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    topic_id UUID NOT NULL, -- references either topics.id or breaks.id
+    topic_type TEXT NOT NULL, -- 'topic' or 'break'
+    planned_duration INTEGER NOT NULL,
+    actual_duration NUMERIC NOT NULL,
+    exceeded_time NUMERIC NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    ended_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Ensure newest columns exist in meeting_execution_logs
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meeting_execution_logs' AND column_name='skipped') THEN
+        ALTER TABLE meeting_execution_logs ADD COLUMN skipped BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meeting_execution_logs' AND column_name='time_adjustments') THEN
+        ALTER TABLE meeting_execution_logs ADD COLUMN time_adjustments INTEGER DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='meeting_execution_logs' AND column_name='adjustment_count') THEN
+        ALTER TABLE meeting_execution_logs ADD COLUMN adjustment_count INTEGER DEFAULT 0;
+    END IF;
+END $$;
+
+-- 7. Meeting Participants Table
+CREATE TABLE IF NOT EXISTS meeting_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Update Topic Participants
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='topic_participants' AND column_name='meeting_participant_id') THEN
+        ALTER TABLE topic_participants ADD COLUMN meeting_participant_id UUID REFERENCES meeting_participants(id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='topic_participants' AND column_name='role') THEN
+        ALTER TABLE topic_participants ADD COLUMN role TEXT NOT NULL DEFAULT 'optional';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='topic_participants' AND column_name='created_at') THEN
+        ALTER TABLE topic_participants ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    END IF;
+    -- Make participant_name nullable
+    ALTER TABLE topic_participants ALTER COLUMN participant_name DROP NOT NULL;
+END $$;
 
 -- Row Level Security (RLS)
 
@@ -132,3 +191,20 @@ DO $$ BEGIN
     DROP POLICY IF EXISTS "Users can manage breaks" ON breaks;
     CREATE POLICY "Users can manage breaks" ON breaks FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM meetings WHERE meetings.id = breaks.meeting_id AND meetings.user_id = auth.uid()));
 END $$;
+
+-- Execution Logs
+ALTER TABLE meeting_execution_logs ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Users can manage execution logs" ON meeting_execution_logs;
+    CREATE POLICY "Users can manage execution logs" ON meeting_execution_logs FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM meetings WHERE meetings.id = meeting_execution_logs.meeting_id AND meetings.user_id = auth.uid()));
+END $$;
+
+-- Meeting Participants
+ALTER TABLE meeting_participants ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Users can manage meeting participants" ON meeting_participants;
+    CREATE POLICY "Users can manage meeting participants" ON meeting_participants FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM meetings WHERE meetings.id = meeting_participants.meeting_id AND meetings.user_id = auth.uid()));
+END $$;
+
+-- Topic Participants (Updated RLS already exists but we ensure it works with meeting_id check if needed)
+-- The existing rule uses topic_id -> meetings, which is still correct.
