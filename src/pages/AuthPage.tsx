@@ -4,7 +4,8 @@ import {
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from '@/src/lib/firebase';
 import { useAuth } from '@/src/hooks/useAuth';
@@ -50,6 +51,30 @@ export default function AuthPage() {
       navigate('/');
     }
   }, [user, authLoading, navigate]);
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error('Por favor, digite seu e-mail primeiro para recuperar a senha.');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      toast.success('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+    } catch (error: any) {
+      console.error('Reset password error:', error);
+      let errorMsg = 'Erro ao enviar e-mail de recuperação.';
+      if (error.code === 'auth/user-not-found') {
+        errorMsg = 'Nenhum usuário encontrado com este e-mail.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMsg = 'O formato do e-mail é inválido.';
+      }
+      toast.error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
@@ -465,7 +490,15 @@ export default function AuthPage() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between px-1">
                           <Label className="text-[10px] font-black uppercase tracking-widest" htmlFor="password">Senha Segura</Label>
-                          {!isSignUp && <button type="button" className="text-[10px] font-black text-primary uppercase hover:underline">Esqueceu?</button>}
+                          {!isSignUp && (
+                            <button 
+                              type="button" 
+                              onClick={handleForgotPassword}
+                              className="text-[10px] font-black text-primary uppercase hover:underline"
+                            >
+                              Esqueceu?
+                            </button>
+                          )}
                         </div>
                         <Input 
                           id="password"
