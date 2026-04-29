@@ -803,7 +803,11 @@ export default function MeetingPage() {
   }, [meeting?.start_time, items]);
 
   const updateStartTime = async (newStartTime: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para updateStartTime');
+      return;
+    }
+    console.log('Atualizando horário de início...', { meetingId: id, newStartTime });
     try {
       const meetingRef = doc(db, 'meetings', id);
       await updateDoc(meetingRef, {
@@ -813,13 +817,19 @@ export default function MeetingPage() {
       setMeeting(prev => prev ? { ...prev, start_time: newStartTime } : null);
       updateMeetingMetadata({ startTime: newStartTime });
       toast.success('Horário de início atualizado');
+      console.log('Horário de início atualizado com sucesso');
     } catch (error: any) {
+      console.error('Erro ao atualizar horário:', error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const updateMeetingDate = async (newDate: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para updateMeetingDate');
+      return;
+    }
+    console.log('Atualizando data da reunião...', { meetingId: id, newDate });
     try {
       const meetingRef = doc(db, 'meetings', id);
       await updateDoc(meetingRef, {
@@ -829,7 +839,9 @@ export default function MeetingPage() {
       setMeeting(prev => prev ? { ...prev, event_date: newDate || null } : null);
       updateMeetingMetadata({ startTime: meeting?.start_time ? new Date(newDate + 'T' + format(parseISO(meeting.start_time), 'HH:mm:ss')).toISOString() : undefined });
       toast.success('Data atualizada');
+      console.log('Data atualizada com sucesso');
     } catch (error: any) {
+      console.error('Erro ao atualizar data:', error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
@@ -839,6 +851,7 @@ export default function MeetingPage() {
       setIsEditingTitle(false);
       return;
     }
+    console.log('Atualizando título da reunião...', { meetingId: id, oldTitle: meeting?.title, newTitle: titleInput });
     try {
       const meetingRef = doc(db, 'meetings', id);
       await updateDoc(meetingRef, {
@@ -848,35 +861,57 @@ export default function MeetingPage() {
       setMeeting(prev => prev ? { ...prev, title: titleInput } : null);
       setIsEditingTitle(false);
       toast.success('Título atualizado');
+      console.log('Título atualizado com sucesso');
     } catch (error: any) {
+      console.error('Erro ao atualizar título:', error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const addItem = async (type: 'topic' | 'break', customTitle?: string, customDuration?: number) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido');
+      toast.error('Erro interno: ID da reunião não encontrado.');
+      return;
+    }
+
     const nextIndex = items.length;
     const body: any = {
       title: customTitle || (type === 'topic' ? 'Novo Tópico' : 'Intervalo'),
       duration_minutes: customDuration || (type === 'topic' ? 15 : 10),
+      duration: customDuration || (type === 'topic' ? 15 : 10), // Adding both for compatibility
       order_index: nextIndex,
-      type
+      order: nextIndex, // Adding both for compatibility
+      type,
+      createdAt: serverTimestamp(),
+      created_at: new Date().toISOString()
     };
+
+    console.log(`Salvando novo ${type}...`, { meetingId: id, data: body });
 
     try {
       const collectionName = type === 'topic' ? 'topics' : 'breaks';
       const docRef = await addDoc(collection(db, `meetings/${id}/${collectionName}`), body);
-      const newItem = { id: docRef.id, ...body } as AgendaItem;
+      
+      console.log(`Sucesso! ${type} criado com ID:`, docRef.id);
+      
+      const newItem = { id: docRef.id, ...body, createdAt: new Date().toISOString() } as AgendaItem;
       const newItems = [...items, newItem];
       setItems(newItems);
       updateMeetingMetadata({ items: newItems });
+      toast.success(type === 'topic' ? 'Tópico adicionado' : 'Intervalo adicionado');
     } catch (error: any) {
+      console.error(`Erro ao salvar ${type}:`, error);
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/${type}s`);
     }
   };
 
   const deleteItem = async (itemId: string, type: 'topic' | 'break') => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para deleteItem');
+      return;
+    }
+    console.log(`Removendo ${type}...`, { meetingId: id, itemId });
     try {
       const collectionName = type === 'topic' ? 'topics' : 'breaks';
       await deleteDoc(doc(db, `meetings/${id}/${collectionName}`, itemId));
@@ -884,13 +919,19 @@ export default function MeetingPage() {
       setItems(newItems);
       updateMeetingMetadata({ items: newItems });
       toast.success('Item removido');
+      console.log(`${type} removido com sucesso`);
     } catch (error: any) {
+      console.error(`Erro ao remover ${type}:`, error);
       handleFirestoreError(error, OperationType.DELETE, `meetings/${id}/${type}s/${itemId}`);
     }
   };
 
   const updateItem = async (itemId: string, type: 'topic' | 'break', updates: any) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para updateItem');
+      return;
+    }
+    console.log(`Atualizando ${type}...`, { meetingId: id, itemId, updates });
     try {
       const collectionName = type === 'topic' ? 'topics' : 'breaks';
       const itemRef = doc(db, `meetings/${id}/${collectionName}`, itemId);
@@ -902,17 +943,28 @@ export default function MeetingPage() {
         updateMeetingMetadata({ items: newItems });
       }
       toast.success('Agenda atualizada');
+      console.log(`${type} atualizado com sucesso`);
     } catch (error: any) {
+      console.error(`Erro ao atualizar ${type}:`, error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/${type}s/${itemId}`);
     }
   };
 
   const addMeetingParticipant = async (name: string, role: 'required' | 'optional' = 'required') => {
     const trimmedName = name.trim();
-    if (!trimmedName || !id) {
-      if (!trimmedName) toast.error('Digite o nome do profissional');
+    
+    if (!id) {
+      console.error('Erro: meetingId não definido para adicionar participante');
+      toast.error('Erro: Não foi possível identificar a reunião.');
       return;
     }
+
+    if (!trimmedName) {
+      toast.error('Digite o nome do profissional');
+      return;
+    }
+
+    console.log('Salvando participante...', { meetingId: id, name: trimmedName, role });
 
     try {
       const participantData = {
@@ -924,6 +976,8 @@ export default function MeetingPage() {
 
       const docRef = await addDoc(collection(db, `meetings/${id}/participants`), participantData);
       
+      console.log('Sucesso! Participante criado com ID:', docRef.id);
+
       // We use current Date for local state update to avoid wait for server tick
       const data = { id: docRef.id, ...participantData, createdAt: new Date().toISOString() } as MeetingParticipant;
       
@@ -938,16 +992,21 @@ export default function MeetingPage() {
       
       ensureGlobalContact(trimmedName);
     } catch (error: any) {
+      console.error('Erro ao salvar participante:', error);
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/participants`);
     }
   };
 
   const toggleMeetingParticipantRole = async (mpId: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para toggleMeetingParticipantRole');
+      return;
+    }
     const participant = meetingParticipants.find(p => p.id === mpId);
     if (!participant) return;
 
     const newRole = participant.role === 'required' ? 'optional' : 'required';
+    console.log('Alternando papel do participante...', { meetingId: id, mpId, oldRole: participant.role, newRole });
     
     try {
       // Optimistic update
@@ -958,13 +1017,19 @@ export default function MeetingPage() {
       // Update metadata async
       const updatedParticipants = meetingParticipants.map(p => p.id === mpId ? { ...p, role: newRole } : p);
       updateMeetingMetadata({ participants: updatedParticipants });
+      console.log('Papel alternado com sucesso');
     } catch (error: any) {
+      console.error('Erro ao alternar papel:', error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/participants/${mpId}`);
     }
   };
 
   const updateMeetingParticipant = async (mpId: string, name: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para updateMeetingParticipant');
+      return;
+    }
+    console.log('Atualizando nome do participante...', { meetingId: id, mpId, newName: name });
     try {
       await updateDoc(doc(db, `meetings/${id}/participants`, mpId), { name });
       setMeetingParticipants(prev => prev.map(p => p.id === mpId ? { ...p, name } : p));
@@ -987,14 +1052,20 @@ export default function MeetingPage() {
       }));
 
       toast.success('Nome atualizado');
+      console.log('Nome do participante atualizado com sucesso');
       ensureGlobalContact(name);
     } catch (error: any) {
+      console.error('Erro ao atualizar nome do participante:', error);
       handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/participants/${mpId}`);
     }
   };
 
   const removeMeetingParticipant = async (mpId: string) => {
-    if (!id) return;
+    if (!id) {
+      console.error('Erro: meetingId não definido para removeMeetingParticipant');
+      return;
+    }
+    console.log('Removendo participante da reunião...', { meetingId: id, mpId });
     try {
       await deleteDoc(doc(db, `meetings/${id}/participants`, mpId));
       
@@ -1022,7 +1093,9 @@ export default function MeetingPage() {
       }));
 
       toast.success('Participante removido da reunião');
+      console.log('Participante removido com sucesso');
     } catch (error: any) {
+      console.error('Erro ao remover participante:', error);
       handleFirestoreError(error, OperationType.DELETE, `meetings/${id}/participants/${mpId}`);
     }
   };
