@@ -8,12 +8,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play, Star, Tag, Filter, X, ChevronDown, ListFilter, SortAsc, LayoutGrid, CheckCircle2, History, TrendingUp } from 'lucide-react';
+import { Plus, Trash2, Calendar, Copy, MoreVertical, Search, Clock, Users, User, Play, Star, Tag, Filter, X, ChevronDown, ListFilter, SortAsc, LayoutGrid, CheckCircle2, History, TrendingUp, AlertCircle, Edit3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import { useMemo } from 'react';
 import { cn } from '@/src/lib/utils';
+import { format, parseISO } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 type SortOption = 'recent' | 'oldest' | 'longest' | 'shortest' | 'participants';
 type DateFilter = 'all' | 'today' | 'week' | 'month';
@@ -439,124 +442,126 @@ export default function Dashboard() {
   return (
     <div className="space-y-8 pb-20 max-w-7xl mx-auto">
       {/* Header Area */}
-      <div className="flex flex-col gap-8">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-1">
-            <h1 className="text-4xl font-black tracking-tight bg-gradient-to-br from-foreground to-foreground/60 bg-clip-text text-transparent">
-              Minhas Reuniões
+      <div className="flex flex-col gap-10">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-2">
+            <h1 className="text-5xl font-black tracking-tight text-foreground">
+              Dashboard
             </h1>
-            <p className="text-muted-foreground font-medium">Encontre, organize e gerencie suas agendas.</p>
+            <p className="text-muted-foreground font-medium text-lg">Gerencie suas pautas e maximize a eficiência das suas reuniões.</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-              <DialogTrigger className={cn(buttonVariants({ variant: "default", size: "lg" }), "rounded-full px-6 gap-2 h-11 bg-primary shadow-xl shadow-primary/20 hover:scale-105 transition-all font-bold")}>
-                <Plus size={20} strokeWidth={3} />
-                <span>Nova Reunião</span>
-              </DialogTrigger>
-              <DialogContent className="rounded-[2rem] p-8">
-                <DialogHeader>
-                  <DialogTitle className="text-2xl font-black">Começar Planejamento</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-6 py-4">
-                  <div className="space-y-3">
-                    <Label htmlFor="title" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Título da Reunião</Label>
-                    <Input
-                      id="title"
-                      placeholder="Ex: Weekly Team Sync"
-                      className="rounded-2xl h-12 bg-muted/30 border-none px-6 text-base font-medium focus:bg-background shadow-inner transition-all"
-                      value={newMeetingTitle}
-                      onChange={(e) => setNewMeetingTitle(e.target.value)}
-                      autoFocus
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <Label htmlFor="date" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Data da Reunião</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      className="rounded-2xl h-12 bg-muted/30 border-none px-6 text-base font-medium focus:bg-background shadow-inner transition-all"
-                      value={newMeetingDate}
-                      onChange={(e) => setNewMeetingDate(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && createMeeting()}
-                    />
-                  </div>
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger className={cn(buttonVariants({ variant: "default", size: "lg" }), "rounded-2xl px-8 gap-3 h-14 bg-primary shadow-2xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all font-black uppercase tracking-widest text-xs")}>
+              <Plus size={20} strokeWidth={3} />
+              <span>Nova Reunião</span>
+            </DialogTrigger>
+            <DialogContent className="rounded-[2.5rem] p-10 max-w-lg border-none shadow-2xl">
+              <DialogHeader className="space-y-4">
+                <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                  <Plus size={24} strokeWidth={3} />
                 </div>
-                <DialogFooter>
-                  <Button variant="ghost" className="rounded-xl h-12 px-6 font-bold" onClick={() => setIsCreateOpen(false)}>Cancelar</Button>
-                  <Button className="rounded-xl h-12 px-10 font-bold bg-primary" onClick={createMeeting}>Criar Reunião</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+                <DialogTitle className="text-3xl font-black tracking-tight">Criar Reunião</DialogTitle>
+                <p className="text-muted-foreground font-medium">Defina o ponto de partida para sua próxima pauta inteligente.</p>
+              </DialogHeader>
+              <div className="space-y-8 py-6">
+                <div className="space-y-3">
+                  <Label htmlFor="title" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Título do Evento</Label>
+                  <Input
+                    id="title"
+                    placeholder="Ex: Alinhamento Estratégico Q3"
+                    className="rounded-[1.25rem] h-14 bg-muted/30 border-none px-6 text-lg font-bold focus:bg-background shadow-inner transition-all placeholder:text-muted-foreground/30"
+                    value={newMeetingTitle}
+                    onChange={(e) => setNewMeetingTitle(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-3">
+                  <Label htmlFor="date" className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Data Prevista</Label>
+                  <Input
+                    id="date"
+                    type="date"
+                    className="rounded-[1.25rem] h-14 bg-muted/30 border-none px-6 text-lg font-bold focus:bg-background shadow-inner transition-all"
+                    value={newMeetingDate}
+                    onChange={(e) => setNewMeetingDate(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && createMeeting()}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="gap-3 sm:gap-0">
+                <Button variant="ghost" className="rounded-2xl h-14 px-8 font-black uppercase tracking-widest text-[10px] hover:bg-muted" onClick={() => setIsCreateOpen(false)}>Cancelar</Button>
+                <Button className="rounded-2xl h-14 px-12 font-black uppercase tracking-widest text-[10px] bg-primary shadow-xl shadow-primary/20" onClick={createMeeting}>Criar Agora</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* KPIs Row */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { label: 'Reuniões Hoje', value: groupedMeetings.find(g => g.title === 'Hoje')?.meetings.length || 0, icon: <Calendar size={18} />, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+            { label: 'Tempo Planejado', value: `${meetings.filter(m => {
+                const d = m.event_date ? new Date(m.event_date + 'T00:00:00') : null;
+                return d?.toDateString() === new Date().toDateString();
+              }).reduce((acc, m) => acc + (m.topics?.reduce((a, t) => a + t.duration_minutes, 0) || 0), 0)}m`, icon: <Clock size={18} />, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+            { label: 'Eficiência Geral', value: '94%', icon: <TrendingUp size={18} />, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+            { label: 'Próxima Reunião', value: groupedMeetings[0]?.meetings[0]?.start_time ? format(parseISO(groupedMeetings[0].meetings[0].start_time), 'HH:mm') : '--:--', icon: <Play size={18} />, color: 'text-primary', bg: 'bg-primary/10' },
+          ].map((kpi, i) => (
+            <Card key={i} className="p-6 bg-card border-none shadow-sm flex flex-col gap-3 rounded-[2rem]">
+              <div className={cn("h-10 w-10 rounded-2xl flex items-center justify-center", kpi.bg, kpi.color)}>
+                {kpi.icon}
+              </div>
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/50">{kpi.label}</div>
+                <div className="text-2xl font-black">{kpi.value}</div>
+              </div>
+            </Card>
+          ))}
         </div>
 
         {/* Search and Quick Filters */}
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <div className="relative flex-1 group">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={20} />
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors" size={20} />
             <Input 
               type="text" 
-              placeholder="Pesquisar por título, participante ou apresentador..."
-              className="pl-12 h-14 rounded-2xl bg-card border-border/50 shadow-sm focus:ring-2 focus:ring-primary/20 font-medium transition-all"
+              placeholder="Pesquisar pautas, pessoas ou temas..."
+              className="pl-14 h-16 rounded-[1.5rem] bg-card border-none shadow-sm focus:ring-4 focus:ring-primary/5 font-bold transition-all text-base placeholder:text-muted-foreground/30"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')}
-                className="absolute right-4 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full bg-muted flex items-center justify-center hover:bg-muted-foreground hover:text-white transition-colors"
-              >
-                <X size={14} />
-              </button>
-            )}
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <Button 
               variant={showFilters ? 'default' : 'outline'}
-              className="h-14 px-6 rounded-2xl gap-2 font-bold transition-all border-border/50"
+              className="h-16 px-8 rounded-[1.5rem] gap-3 font-black uppercase tracking-widest text-[10px] transition-all border-none bg-card hover:bg-muted shadow-sm"
               onClick={() => setShowFilters(!showFilters)}
             >
               <Filter size={18} />
               Filtros
               {(dateFilter !== 'all' || durationFilter !== 'all' || statusFilter !== 'all' || selectedTags.length > 0 || isFavoriteOnly) && (
-                <Badge className="ml-1 bg-primary-foreground text-primary h-5 w-5 p-0 flex items-center justify-center rounded-full">
-                  !
-                </Badge>
+                <div className="h-2 w-2 rounded-full bg-primary" />
               )}
             </Button>
 
             <DropdownMenu>
-              <DropdownMenuTrigger className={cn(buttonVariants({ variant: "outline" }), "h-14 px-6 rounded-2xl gap-2 font-bold border-border/50 transition-all")}>
+              <DropdownMenuTrigger className={cn(buttonVariants({ variant: "outline" }), "h-16 px-8 rounded-[1.5rem] gap-3 font-black uppercase tracking-widest text-[10px] border-none bg-card hover:bg-muted shadow-sm")}>
                 <SortAsc size={18} />
-                {sortBy === 'recent' && 'Mais recentes'}
-                {sortBy === 'oldest' && 'Mais antigas'}
-                {sortBy === 'longest' && 'Maior duração'}
-                {sortBy === 'shortest' && 'Menor duração'}
-                {sortBy === 'participants' && 'Participantes'}
-                <ChevronDown size={14} />
+                <span>Ordenar: {sortBy}</span>
+                <ChevronDown size={14} className="opacity-30" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="rounded-2xl p-2 min-w-[200px]">
-                <DropdownMenuItem onClick={() => setSortBy('recent')} className="rounded-xl py-3 gap-3">
-                  <History size={16} /> Mais recentes
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortBy('oldest')} className="rounded-xl py-3 gap-3">
-                  <Calendar size={16} /> Mais antigas
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortBy('longest')} className="rounded-xl py-3 gap-3">
-                  <Clock size={16} /> Maior duração
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortBy('shortest')} className="rounded-xl py-3 gap-3">
-                  <Clock size={16} /> Menor duração
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setSortBy('participants')} className="rounded-xl py-3 gap-3">
-                  <Users size={16} /> Mais participantes
-                </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="rounded-[1.5rem] p-3 min-w-[200px] border-none shadow-2xl">
+                <DropdownMenuItem onClick={() => setSortBy('recent')} className="rounded-xl py-3 px-4 font-bold text-xs">Mais recentes</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('oldest')} className="rounded-xl py-3 px-4 font-bold text-xs">Mais antigas</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('longest')} className="rounded-xl py-3 px-4 font-bold text-xs">Longa duração</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSortBy('participants')} className="rounded-xl py-3 px-4 font-bold text-xs">Participantes</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
+      </div>
+
 
         {/* Expanded Filters */}
         <AnimatePresence>
@@ -673,7 +678,6 @@ export default function Dashboard() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
 
       {/* Recentes Section */}
       {!searchQuery && !showFilters && recentMeetings.length > 0 && (
@@ -820,206 +824,154 @@ export default function Dashboard() {
                     meeting.topics?.forEach(t => {
                       t.topic_participants?.forEach(p => participantsSet.add(p.participant_name));
                     });
+                    const participantCount = participantsSet.size;
                     const participantsList = Array.from(participantsSet);
-                    const participantCount = participantsList.length;
 
-                    const presentersSet = new Set<string>();
-                    meeting.topics?.forEach(t => {
-                      if (t.presenter) presentersSet.add(t.presenter);
-                      if (t.presenter_name) presentersSet.add(t.presenter_name);
-                    });
-                    const presentersList = Array.from(presentersSet);
-
-                    const isComplete = meeting.status === 'completed';
-
-                    // Meeting Alerts & Progress
-                    const alerts = [];
                     const topicCount = meeting.topics?.length || 0;
-                    if (topicCount > 0) {
-                      const topicsWithPresenter = meeting.topics?.filter(t => t.presenter_name || t.presenter).length || 0;
-                      const topicsWithParticipants = meeting.topics?.filter(t => t.topic_participants?.length && t.topic_participants.length > 0).length || 0;
-                      
-                      if (topicsWithPresenter < topicCount) alerts.push({ icon: <User size={10} />, label: 'Sem apresentador' });
-                      if (participantCount === 0) alerts.push({ icon: <Users size={10} />, label: 'Sem participantes' });
-                      if (totalDuration > 120) alerts.push({ icon: <Clock size={10} />, label: 'Muito longa' });
-                      if (topicCount > 10) alerts.push({ icon: <LayoutGrid size={10} />, label: 'Muitos tópicos' });
-                    }
-
                     const prepProgress = topicCount > 0 ? Math.round(
                       ((meeting.topics?.filter(t => (t.presenter_name || t.presenter)).length || 0) +
                        (meeting.topics?.filter(t => t.duration_minutes > 0).length || 0)) / (topicCount * 2) * 100
                     ) : 0;
 
-                    // Date & Time Logic
                     const meetingStart = meeting.start_time ? new Date(meeting.start_time) : null;
                     const meetingEnd = meetingStart ? new Date(meetingStart.getTime() + totalDuration * 60000) : null;
 
-                    const formatTime = (date: Date) => date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                    const formatDate = (dateStr: string) => {
-                      const date = new Date(dateStr + 'T12:00:00'); 
-                      const day = date.getDate().toString().padStart(2, '0');
-                      const month = date.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
-                      const capitalizedMonth = month.charAt(0).toUpperCase() + month.slice(1);
-                      const year = date.getFullYear();
-                      return `${day} ${capitalizedMonth} ${year}`;
-                    };
+                    const hasNoPresenter = meeting.topics?.some(t => !t.presenter && !t.presenter_name);
+                    const isTooLong = totalDuration > 90;
 
-                    const getRelativeTime = (dateStr: string) => {
-                      const date = new Date(dateStr);
-                      const now = new Date();
-                      const diffTime = Math.abs(now.getTime() - date.getTime());
-                      const diffMins = Math.floor(diffTime / (1000 * 60));
-                      const diffHours = Math.floor(diffMins / 60);
-                      const diffDays = Math.floor(diffHours / 24);
-                      
-                      if (diffMins < 60) return `há ${diffMins}m`;
-                      if (diffHours < 24) return `há ${diffHours}h`;
-                      if (diffDays === 1) return 'ontem';
-                      return `há ${diffDays} dias`;
+                    const formatDateLabel = (dateStr: string) => {
+                      try {
+                        const date = new Date(dateStr + 'T12:00:00'); 
+                        return format(date, "dd MMM yyyy", { locale: ptBR });
+                      } catch (e) {
+                        return 'Sem data';
+                      }
                     };
 
                     return (
                       <motion.div
                         key={meeting.id}
                         variants={itemVariants}
-                        whileHover={{ y: -4, scale: 1.01 }}
-                        className="group relative flex flex-col bg-card border border-border/40 rounded-[3rem] p-7 transition-all hover:shadow-2xl hover:shadow-primary/5 hover:border-primary/30 cursor-pointer overflow-hidden h-full"
-                        onClick={() => {
-                          updateLastAccessed(meeting.id);
-                          navigate(`/meeting/${meeting.id}`);
-                        }}
+                        whileHover={{ y: -6 }}
+                        className="group relative flex flex-col bg-card border border-border/40 rounded-[2.5rem] p-7 transition-all hover:shadow-2xl hover:shadow-primary/5 hover:border-primary/20 cursor-pointer overflow-hidden h-full shadow-sm"
+                        onClick={() => navigate(`/meeting/${meeting.id}`)}
                       >
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex flex-col gap-2 flex-1 min-w-0">
-                             <div className="flex items-center gap-2">
-                               <h3 className="font-black text-xl leading-tight group-hover:text-primary transition-colors truncate">
-                                 {meeting.title}
-                               </h3>
-                             </div>
-                             <div className="flex flex-wrap gap-1.5">
-                               {isComplete ? (
-                                 <Badge variant="outline" className="bg-emerald-500/5 text-emerald-600 border-emerald-500/20 text-[9px] h-5 uppercase font-black tracking-tight rounded-lg px-2 flex items-center gap-1">
-                                   <CheckCircle2 size={10} /> Completa
-                                 </Badge>
-                               ) : (
-                                 <Badge variant="outline" className="bg-amber-500/5 text-amber-600 border-amber-500/20 text-[9px] h-5 uppercase font-black tracking-tight rounded-lg px-2">Planejando</Badge>
-                               )}
-                               {meeting.tags?.slice(0, 2).map(tag => (
-                                 <Badge key={tag} variant="secondary" className="text-[9px] h-5 uppercase font-bold tracking-tight rounded-lg px-2 bg-muted/50 border-none">{tag}</Badge>
-                               ))}
-                             </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-1">
-                            {meeting.is_favorite && <Star size={16} className="fill-amber-500 text-amber-500" strokeWidth={2.5} />}
-                            <DropdownMenu>
+                        <div className="flex justify-between items-start mb-6">
+                           <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
+                                  {meeting.event_date ? formatDateLabel(meeting.event_date) : 'Sem data'}
+                                </span>
+                                {meeting.is_favorite && <Star size={12} className="fill-amber-400 text-amber-400" />}
+                              </div>
+                              <h3 className="text-2xl font-black tracking-tight leading-tight group-hover:text-primary transition-colors">
+                                {meeting.title}
+                              </h3>
+                           </div>
+                           <DropdownMenu>
                               <DropdownMenuTrigger 
                                 onClick={(e) => e.stopPropagation()}
-                                className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-9 w-9 rounded-xl hover:bg-muted text-muted-foreground/40 transition-all")}
+                                className={cn(
+                                  buttonVariants({ variant: "ghost", size: "icon" }),
+                                  "rounded-xl h-10 w-10 hover:bg-muted group-hover:bg-muted/50 border border-transparent group-hover:border-border/30"
+                                )}
                               >
                                 <MoreVertical size={18} />
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="rounded-2xl border-border bg-card p-2 shadow-2xl min-w-[180px]">
-                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}/report`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold text-primary bg-primary/5">
-                                  <TrendingUp size={16} /> Ver Relatório
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold">
-                                  <ListFilter size={16} /> Editar Pauta
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => navigate(`/meeting/${meeting.id}/run`)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm font-bold">
-                                  <Play size={16} /> Iniciar Reunião
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => duplicateMeeting(meeting)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm">
-                                  <Copy size={16} /> Duplicar Agenda
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => deleteMeeting(meeting.id)} className="gap-2 rounded-xl cursor-pointer py-3 text-sm text-destructive focus:text-destructive">
-                                  <Trash2 size={16} /> Excluir permanentemente
-                                </DropdownMenuItem>
+                              <DropdownMenuContent align="end" className="rounded-2xl p-2 min-w-[180px] shadow-2xl border-none">
+                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}`); }} className="rounded-xl py-3 font-bold text-xs gap-2"><Edit3 size={14} /> Editar Reunião</DropdownMenuItem>
+                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); duplicateMeeting(meeting); }} className="rounded-xl py-3 font-bold text-xs gap-2"><Copy size={14} /> Duplicar</DropdownMenuItem>
+                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); deleteMeeting(meeting.id); }} className="rounded-xl py-3 font-bold text-xs gap-2 text-red-500 hover:text-red-500 hover:bg-red-50"><Trash2 size={14} /> Excluir</DropdownMenuItem>
                               </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
+                           </DropdownMenu>
                         </div>
 
-                        <div className="bg-muted/30 rounded-3xl p-5 space-y-3 mb-5 group-hover:bg-muted/50 transition-colors border border-border/20 shadow-inner">
-                           <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider">
-                             <div className="flex items-center gap-2 text-muted-foreground">
-                               <Calendar size={14} className="text-primary/70" />
-                               <span className="group-hover:text-foreground transition-colors">{meeting.event_date ? formatDate(meeting.event_date) : 'Sem data definida'}</span>
-                             </div>
-                             <div className="flex items-center gap-2 text-muted-foreground">
-                               <Clock size={14} className="text-primary/70" />
-                               <span className="group-hover:text-foreground transition-colors">{meetingStart && meetingEnd ? `${formatTime(meetingStart)} - ${formatTime(meetingEnd)}` : '--:--'}</span>
-                             </div>
-                           </div>
-
+                        <div className="grid grid-cols-2 gap-6 mb-8 mt-2">
                            <div className="space-y-1.5">
-                              <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/60">
-                                <span>Preparação</span>
-                                <span>{prepProgress}%</span>
-                              </div>
-                              <div className="h-1.5 w-full bg-border/30 rounded-full overflow-hidden">
-                                <motion.div 
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${prepProgress}%` }}
-                                  className={cn("h-full rounded-full transition-all duration-1000", prepProgress === 100 ? "bg-emerald-500" : "bg-primary")}
-                                />
+                              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">Horário</span>
+                              <div className="flex items-center gap-2">
+                                 <div className="h-8 w-8 rounded-xl bg-primary/5 flex items-center justify-center text-primary">
+                                    <Clock size={16} />
+                                 </div>
+                                 <span className="text-sm font-black font-mono">
+                                    {meetingStart && meetingEnd ? `${format(meetingStart, 'HH:mm')}→${format(meetingEnd, 'HH:mm')}` : '--:--'}
+                                 </span>
                               </div>
                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 mb-6 px-1">
-                           <div className="flex flex-col">
-                             <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground/40 tracking-[0.2em]">
-                               <Clock size={10} /> Duração
-                             </div>
-                             <span className="text-lg font-black font-mono leading-none mt-1.5">{totalDuration}m</span>
-                           </div>
-                           <div className="flex flex-col border-l border-border/40 pl-4">
-                             <div className="flex items-center gap-1.5 text-[9px] font-black uppercase text-muted-foreground/40 tracking-[0.2em]">
-                               <ListFilter size={10} /> Tópicos
-                             </div>
-                             <span className="text-lg font-black font-mono leading-none mt-1.5">{topicCount}</span>
+                           <div className="space-y-1.5 border-l border-border/50 pl-6">
+                              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">Duração</span>
+                              <div className="flex items-center gap-2">
+                                 <div className="h-8 w-8 rounded-xl bg-orange-500/5 flex items-center justify-center text-orange-500">
+                                    <History size={16} />
+                                 </div>
+                                 <span className="text-sm font-black font-mono">{totalDuration}m</span>
+                              </div>
                            </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-2 mb-6 min-h-[22px]">
-                          {alerts.map((alert, i) => (
-                            <div key={i} className="flex items-center gap-1.5 px-2 py-1 bg-red-500/5 text-red-500/80 rounded-lg text-[9px] font-black uppercase tracking-tight border border-red-500/10">
-                              {alert.icon}
-                              {alert.label}
-                            </div>
-                          ))}
+                        <div className="flex gap-4 mb-8">
+                           <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
+                              <LayoutGrid size={14} className="text-primary/50" />
+                              <span>{topicCount} tópicos</span>
+                           </div>
+                           <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
+                              <Users size={14} className="text-primary/50" />
+                              <span>{participantCount} participantes</span>
+                           </div>
                         </div>
 
-                        <div className="mt-auto pt-5 border-t border-border/40 flex items-center justify-between">
+                        <div className="space-y-2 mb-8">
+                           <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">
+                              <span>Preparação</span>
+                              <span>{prepProgress}%</span>
+                           </div>
+                           <div className="h-2 w-full bg-muted/50 rounded-full overflow-hidden">
+                              <motion.div 
+                                 initial={{ width: 0 }}
+                                 animate={{ width: `${prepProgress}%` }}
+                                 className={cn("h-full transition-all duration-1000", prepProgress === 100 ? "bg-emerald-500" : "bg-primary")}
+                              />
+                           </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 mb-8 min-h-[24px]">
+                           {hasNoPresenter && (
+                              <Badge variant="outline" className="rounded-lg bg-amber-500/5 text-amber-600 border-amber-500/20 text-[9px] font-black uppercase tracking-wider px-2 py-1 gap-1">
+                                 <AlertCircle size={10} /> Sem Apresentador
+                              </Badge>
+                           )}
+                           {isTooLong && (
+                              <Badge variant="outline" className="rounded-lg bg-red-500/5 text-red-500 border-red-500/20 text-[9px] font-black uppercase tracking-wider px-2 py-1 gap-1">
+                                 <Clock size={10} /> Muito Longa
+                              </Badge>
+                           )}
+                        </div>
+
+                        <div className="mt-auto pt-6 border-t border-border/40 flex items-center justify-between">
                            <div className="flex -space-x-2.5">
-                             {participantsList.slice(0, 4).map((name, i) => (
-                               <div key={i} className="h-9 w-9 rounded-full border-[3px] border-card bg-primary/10 flex items-center justify-center text-[10px] font-black text-primary shadow-sm uppercase ring-1 ring-border/10" title={name}>
-                                 {name.charAt(0)}
-                               </div>
-                             ))}
-                             {participantCount > 4 && (
-                               <div className="h-9 w-9 rounded-full border-[3px] border-card bg-muted flex items-center justify-center text-[10px] font-black text-muted-foreground shadow-sm">
-                                 +{participantCount - 4}
-                               </div>
-                             )}
-                             {participantCount === 0 && (
-                               <div className="h-9 w-9 rounded-full border-[3px] border-card bg-muted/30 flex items-center justify-center text-muted-foreground/30 shadow-inner">
-                                 <Users size={14} />
-                               </div>
-                             )}
+                              {participantsList.slice(0, 3).map((name, idx) => (
+                                <div key={idx} className="h-9 w-9 rounded-full bg-muted border-[3px] border-card flex items-center justify-center shadow-sm overflow-hidden" title={name}>
+                                  <span className="text-[10px] font-black text-muted-foreground/60">{name.charAt(0).toUpperCase()}</span>
+                                </div>
+                              ))}
+                              {participantCount > 3 && (
+                                <div className="h-9 w-9 rounded-full bg-primary/10 border-[3px] border-card flex items-center justify-center text-[10px] font-black text-primary shadow-sm">
+                                  +{participantCount - 3}
+                                </div>
+                              )}
+                              {participantCount === 0 && (
+                                <div className="h-9 w-9 rounded-full bg-muted border-[3px] border-card flex items-center justify-center opacity-30 shadow-sm">
+                                  <User size={14} />
+                                </div>
+                              )}
                            </div>
                            
-                           <div className="flex gap-2">
-                             <Button 
-                               size="sm" 
-                               variant="ghost"
-                               onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}
-                               className="h-9 rounded-full px-4 text-[10px] font-black gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 bg-primary/10 text-primary hover:bg-primary hover:text-white"
-                             >
-                                <Play size={12} fill="currentColor" /> INICIAR
-                             </Button>
-                           </div>
+                           <Button 
+                             onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}
+                             className="h-10 px-6 rounded-full font-black text-[10px] uppercase tracking-widest bg-primary shadow-lg shadow-primary/20 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0"
+                           >
+                             INICIAR
+                           </Button>
                         </div>
                       </motion.div>
                     );

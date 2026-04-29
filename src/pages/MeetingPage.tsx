@@ -234,23 +234,23 @@ function SortableAgendaItem({
                   <div className="w-full xl:w-[280px] space-y-1.5 shrink-0">
                     <Label className="text-xs font-black uppercase tracking-widest text-muted-foreground/60">Apresentador</Label>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          className="w-full h-10 justify-between rounded-xl bg-muted/30 border-border/50 text-xs font-medium hover:bg-muted/50"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            { (editData as Topic).presenter_id ? (
-                               <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[8px] font-black text-primary border border-primary/20 shrink-0">
-                                 {(editData as Topic).presenter_name?.charAt(0).toUpperCase()}
-                               </div>
-                            ) : (
-                               <User size={14} className="text-primary/60 shrink-0" />
-                            )}
-                            <span className="truncate">{(editData as Topic).presenter_name || 'Definir apresentador'}</span>
-                          </div>
-                          <ChevronDown size={14} className="opacity-40" />
-                        </Button>
+                      <DropdownMenuTrigger
+                        className={cn(
+                          buttonVariants({ variant: "outline" }),
+                          "w-full h-10 justify-between rounded-xl bg-muted/30 border-border/50 text-xs font-medium hover:bg-muted/50"
+                        )}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          { (editData as Topic).presenter_id ? (
+                             <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[8px] font-black text-primary border border-primary/20 shrink-0">
+                               {(editData as Topic).presenter_name?.charAt(0).toUpperCase()}
+                             </div>
+                          ) : (
+                             <User size={14} className="text-primary/60 shrink-0" />
+                          )}
+                          <span className="truncate">{(editData as Topic).presenter_name || 'Definir apresentador'}</span>
+                        </div>
+                        <ChevronDown size={14} className="opacity-40" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="min-w-[240px] rounded-2xl p-2 shadow-2xl">
                         <DropdownMenuItem 
