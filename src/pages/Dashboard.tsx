@@ -882,8 +882,8 @@ export default function Dashboard() {
                       <motion.div
                         key={meeting.id}
                         variants={itemVariants}
-                        whileHover={{ y: -6, scale: 1.01 }}
-                        className="group relative flex flex-col bg-card border border-border/40 rounded-[2.5rem] p-6 transition-all hover:shadow-2xl hover:shadow-primary/10 cursor-pointer overflow-hidden h-full"
+                        whileHover={{ y: -4, scale: 1.01 }}
+                        className="group relative flex flex-col bg-card border border-border/40 rounded-[3rem] p-7 transition-all hover:shadow-2xl hover:shadow-primary/5 hover:border-primary/30 cursor-pointer overflow-hidden h-full"
                         onClick={() => {
                           updateLastAccessed(meeting.id);
                           navigate(`/meeting/${meeting.id}`);
@@ -1010,37 +1010,16 @@ export default function Dashboard() {
                              )}
                            </div>
                            
-                           <div className="flex flex-col items-end">
-                             <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">
-                               {getRelativeTime(meeting.updated_at || meeting.created_at)}
-                             </span>
+                           <div className="flex gap-2">
+                             <Button 
+                               size="sm" 
+                               variant="ghost"
+                               onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}
+                               className="h-9 rounded-full px-4 text-[10px] font-black gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0 bg-primary/10 text-primary hover:bg-primary hover:text-white"
+                             >
+                                <Play size={12} fill="currentColor" /> INICIAR
+                             </Button>
                            </div>
-                        </div>
-
-                        {/* Hover Overlay Actions */}
-                        <div className="absolute inset-0 bg-primary/95 flex flex-col items-center justify-center gap-4 opacity-0 group-hover:opacity-100 transition-all duration-300 backdrop-blur-sm scale-110 group-hover:scale-100">
-                          <h3 className="text-white font-black text-xl mb-2 px-8 text-center">{meeting.title}</h3>
-                          <div className="flex flex-col w-full px-12 gap-3">
-                            <Button 
-                              onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}
-                              className="w-full rounded-2xl h-12 gap-3 bg-white text-primary hover:bg-white/90 font-black shadow-2xl"
-                            >
-                              <Play size={18} className="fill-current" /> Começar Agora
-                            </Button>
-                            <Button 
-                              onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}`); }}
-                              variant="outline"
-                              className="w-full rounded-2xl h-12 gap-3 bg-transparent border-white/40 text-white hover:bg-white/10 font-bold"
-                            >
-                              <ListFilter size={18} /> Detalhes & Pauta
-                            </Button>
-                          </div>
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); duplicateMeeting(meeting); }}
-                            className="mt-4 text-white/60 hover:text-white transition-colors flex items-center gap-2 text-[10px] font-black uppercase tracking-widest"
-                          >
-                            <Copy size={12} /> Criar Cópia
-                          </button>
                         </div>
                       </motion.div>
                     );

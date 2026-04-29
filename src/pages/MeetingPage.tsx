@@ -346,71 +346,83 @@ function SortableAgendaItem({
                 </div>
                 {isTopic && (
                   <div className="mt-3 flex flex-col gap-3">
-                    <div className="flex flex-wrap gap-4">
-                       {/* Required Zone */}
-                       <div 
-                         ref={requiredRef}
-                         className={`flex flex-col gap-1.5 p-2 rounded-2xl border-2 border-dashed transition-all min-w-[140px] ${
-                           isOverRequired ? 'bg-primary/10 border-primary scale-[1.02]' : 'bg-transparent border-transparent'
-                         }`}
-                       >
-                         <div className="flex items-center gap-1.5 mb-1">
-                            <div className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">Obrigatórios</span>
-                         </div>
-                         <div className="flex flex-wrap gap-1.5">
-                           {itemParticipants.filter(p => p.role === 'required').map(p => (
-                            <div 
-                              key={p.id} 
-                              className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-primary/10 border-primary/20 text-primary font-bold shadow-sm select-none"
-                            >
-                               <span className="text-[10px] truncate max-w-[80px]">{p.name}</span>
-                               <button 
-                                 onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
-                                 className="p-0.5 rounded-full hover:bg-red-500 hover:text-white transition-all"
-                               >
-                                 <X size={10} />
-                               </button>
-                            </div>
-                           ))}
-                           {itemParticipants.filter(p => p.role === 'required').length === 0 && !isOverRequired && (
-                             <div className="text-[10px] text-muted-foreground/30 font-medium italic py-1 px-2">Vazio</div>
-                           )}
-                         </div>
-                       </div>
-
-                       {/* Optional Zone */}
-                       <div 
-                         ref={optionalRef}
-                         className={`flex flex-col gap-1.5 p-2 rounded-2xl border-2 border-dashed transition-all min-w-[140px] ${
-                           isOverOptional ? 'bg-muted border-muted-foreground/40 scale-[1.02]' : 'bg-transparent border-transparent'
-                         }`}
-                       >
-                         <div className="flex items-center gap-1.5 mb-1">
-                            <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">Opcionais</span>
-                         </div>
-                         <div className="flex flex-wrap gap-1.5">
-                           {itemParticipants.filter(p => p.role === 'optional').map(p => (
-                            <div 
-                              key={p.id} 
-                              className="flex items-center gap-1.5 px-2 py-1 rounded-full border bg-muted border-border/50 text-muted-foreground font-bold shadow-sm select-none"
-                            >
-                               <span className="text-[10px] truncate max-w-[80px]">{p.name}</span>
-                               <button 
-                                 onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
-                                 className="p-0.5 rounded-full hover:bg-primary hover:text-white transition-all"
-                               >
-                                 <X size={10} />
-                               </button>
-                            </div>
-                           ))}
-                           {itemParticipants.filter(p => p.role === 'optional').length === 0 && !isOverOptional && (
-                             <div className="text-[10px] text-muted-foreground/30 font-medium italic py-1 px-2">Vazio</div>
-                           )}
-                         </div>
-                       </div>
-                    </div>
+                        <div className="flex flex-wrap gap-6">
+                           {/* Required Zone */}
+                           <div 
+                             ref={requiredRef}
+                             className={`flex flex-col gap-2 p-3 rounded-[1.5rem] border-2 border-dashed transition-all min-w-[180px] flex-1 lg:flex-none ${
+                               isOverRequired ? 'bg-primary/5 border-primary scale-[1.02] shadow-xl shadow-primary/5' : 'bg-muted/10 border-transparent'
+                             }`}
+                           >
+                             <div className="flex items-center justify-between mb-1 px-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">Obrigatórios</span>
+                                </div>
+                                <Badge variant="outline" className="h-4 px-1.5 text-[8px] font-black border-muted-foreground/20 text-muted-foreground/40">{itemParticipants.filter(p => p.role === 'required').length}</Badge>
+                             </div>
+                             <div className="flex flex-wrap gap-2">
+                               {itemParticipants.filter(p => p.role === 'required').map(p => (
+                                <motion.div 
+                                  key={p.id} 
+                                  whileHover={{ scale: 1.05, y: -2 }}
+                                  whileTap={{ scale: 0.95 }}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary text-white shadow-md shadow-primary/20 select-none cursor-pointer group/pill border border-white/10"
+                                  onClick={(e) => { e.stopPropagation(); onToggleRole(p.id, 'required'); }}
+                                >
+                                   <span className="text-[10px] truncate max-w-[100px] font-black uppercase tracking-tight">{p.name}</span>
+                                   <button 
+                                     onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
+                                     className="ml-0.5 opacity-40 group-hover/pill:opacity-100 hover:text-red-200 transition-all font-normal"
+                                   >
+                                     <X size={10} />
+                                   </button>
+                                </motion.div>
+                               ))}
+                               {itemParticipants.filter(p => p.role === 'required').length === 0 && !isOverRequired && (
+                                 <div className="text-[10px] text-muted-foreground/20 font-black uppercase tracking-widest py-2 px-2">Vazio</div>
+                               )}
+                             </div>
+                           </div>
+    
+                           {/* Optional Zone */}
+                           <div 
+                             ref={optionalRef}
+                             className={`flex flex-col gap-2 p-3 rounded-[1.5rem] border-2 border-dashed transition-all min-w-[180px] flex-1 lg:flex-none ${
+                               isOverOptional ? 'bg-muted border-muted-foreground/30 scale-[1.02] shadow-xl shadow-black/5' : 'bg-muted/10 border-transparent'
+                             }`}
+                           >
+                             <div className="flex items-center justify-between mb-1 px-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">Opcionais</span>
+                                </div>
+                                <Badge variant="outline" className="h-4 px-1.5 text-[8px] font-black border-muted-foreground/20 text-muted-foreground/40">{itemParticipants.filter(p => p.role === 'optional').length}</Badge>
+                             </div>
+                             <div className="flex flex-wrap gap-2">
+                               {itemParticipants.filter(p => p.role === 'optional').map(p => (
+                                <motion.div 
+                                  key={p.id} 
+                                  whileHover={{ scale: 1.05, y: -2 }}
+                                  whileTap={{ scale: 0.95 }}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border bg-card border-border/50 text-foreground font-black shadow-sm select-none cursor-pointer group/pill"
+                                  onClick={(e) => { e.stopPropagation(); onToggleRole(p.id, 'optional'); }}
+                                >
+                                   <span className="text-[10px] truncate max-w-[100px] uppercase tracking-tight">{p.name}</span>
+                                   <button 
+                                     onClick={(e) => { e.stopPropagation(); onRemoveParticipant(p.id); }}
+                                     className="ml-0.5 opacity-40 group-hover/pill:opacity-100 hover:text-primary transition-all font-normal"
+                                   >
+                                     <X size={10} />
+                                   </button>
+                                </motion.div>
+                               ))}
+                               {itemParticipants.filter(p => p.role === 'optional').length === 0 && !isOverOptional && (
+                                 <div className="text-[10px] text-muted-foreground/20 font-black uppercase tracking-widest py-2 px-2">Vazio</div>
+                               )}
+                             </div>
+                           </div>
+                        </div>
                   </div>
                 )}
               </div>
@@ -757,7 +769,7 @@ export default function MeetingPage() {
       
       if (error) throw error;
 
-      setItems(items.map(item => item.id === itemId ? { ...item, ...updates } : item));
+      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...updates } : item));
       toast.success('Agenda atualizada');
     } catch (error) {
       toast.error('Erro ao atualizar item');
@@ -1006,6 +1018,11 @@ export default function MeetingPage() {
     }
   };
 
+  const meetingEndTime = useMemo(() => {
+    if (itemTimings.length === 0) return null;
+    return itemTimings[itemTimings.length - 1].end;
+  }, [itemTimings]);
+
   if (loading && !meeting) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -1017,16 +1034,19 @@ export default function MeetingPage() {
   const totalMin = calculateTotalTime();
 
   return (
-    <div className="max-w-7xl mx-auto space-y-10 pb-24">
+    <div className="max-w-7xl mx-auto space-y-12 pb-24">
       {/* SaaS Breadcrumbs & Actions Header */}
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-8">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 text-sm font-medium">
-            <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2">
-              <History size={16} /> Dashboard
+            <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2 group/back">
+              <div className="h-8 w-8 rounded-full bg-muted/40 flex items-center justify-center group-hover/back:bg-muted transition-colors">
+                <ChevronLeft size={16} />
+              </div>
+              Dashboard
             </Link>
             <ChevronRight size={14} className="text-muted-foreground/30" />
-            <span className="text-foreground font-bold truncate max-w-[200px]">{meeting?.title}</span>
+            <span className="text-foreground font-black tracking-tight">{meeting?.title}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1048,9 +1068,39 @@ export default function MeetingPage() {
           </div>
         </div>
 
-            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 pt-4">
-          <div className="space-y-4 flex-1">
-            <div className="flex items-center gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-10">
+          <div className="space-y-6 flex-1">
+            <div className="space-y-2">
+              <AnimatePresence mode="wait">
+                {isEditingTitle ? (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                  >
+                    <Input 
+                      value={titleInput} 
+                      onChange={(e) => setTitleInput(e.target.value)}
+                      onBlur={updateMeetingTitle}
+                      onKeyDown={(e) => e.key === 'Enter' && updateMeetingTitle()}
+                      autoFocus
+                      className="h-16 text-5xl font-black tracking-tight bg-transparent border-none p-0 focus-visible:ring-0 shadow-none -ml-1"
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.h1 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-5xl lg:text-6xl font-black tracking-tight cursor-text hover:text-primary transition-colors leading-tight min-h-[60px]"
+                    onClick={() => setIsEditingTitle(true)}
+                  >
+                    {meeting?.title}
+                  </motion.h1>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
               {meeting?.status === 'completed' ? (
                 <Badge className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-emerald-500/20 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
                   Concluída
@@ -1064,76 +1114,56 @@ export default function MeetingPage() {
                   Planejamento
                 </Badge>
               )}
-              <div className="flex items-center gap-2 px-3 py-1 bg-muted/50 rounded-full border border-border/50">
-                <Calendar size={12} className="text-muted-foreground" />
+
+              <div className="flex items-center gap-1.5 px-4 h-9 bg-card border border-border/50 rounded-2xl shadow-sm">
+                <Calendar size={14} className="text-primary/70" />
                 <input 
                   type="date" 
                   value={meeting?.event_date || ''}
                   onChange={(e) => updateMeetingDate(e.target.value)}
-                  className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest outline-none focus:text-primary transition-colors cursor-pointer"
+                  className="bg-transparent border-none text-[11px] font-black uppercase tracking-widest outline-none focus:text-primary transition-colors cursor-pointer"
                   title="Data da Reunião"
                 />
               </div>
-              <div className="flex items-center gap-2 px-3 py-1 bg-muted/50 rounded-full border border-border/50">
-                <Clock size={12} className="text-muted-foreground" />
-                <input 
-                  type="time" 
-                  value={meeting?.start_time ? format(parseISO(meeting.start_time), 'HH:mm') : ''}
-                  onChange={(e) => {
-                    const time = e.target.value;
-                    if (time) {
-                      const date = meeting?.start_time ? parseISO(meeting.start_time) : new Date();
-                      const [hours, minutes] = time.split(':');
-                      date.setHours(parseInt(hours), parseInt(minutes));
-                      updateStartTime(date.toISOString());
-                    }
-                  }}
-                  className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest outline-none focus:text-primary transition-colors cursor-pointer"
-                  title="Horário de Início"
-                />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 hidden md:flex items-center gap-2">
-                <History size={12} />
-                Criada em {new Date(meeting?.created_at || '').toLocaleDateString('pt-BR')}
-              </span>
-            </div>
-            
-            <AnimatePresence mode="wait">
-              {isEditingTitle ? (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.98 }}
-                >
-                  <Input 
-                    value={titleInput} 
-                    onChange={(e) => setTitleInput(e.target.value)}
-                    onBlur={updateMeetingTitle}
-                    onKeyDown={(e) => e.key === 'Enter' && updateMeetingTitle()}
-                    autoFocus
-                    className="h-14 text-4xl font-black tracking-tight bg-transparent border-none p-0 focus-visible:ring-0 shadow-none"
+
+              <div className="flex items-center gap-1.5 px-4 h-9 bg-card border border-border/50 rounded-2xl shadow-sm">
+                <Clock size={14} className="text-primary/70" />
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="time" 
+                    value={meeting?.start_time ? format(parseISO(meeting.start_time), 'HH:mm') : ''}
+                    onChange={(e) => {
+                      const time = e.target.value;
+                      if (time) {
+                        const date = meeting?.start_time ? parseISO(meeting.start_time) : new Date();
+                        const [hours, minutes] = time.split(':');
+                        date.setHours(parseInt(hours), parseInt(minutes));
+                        updateStartTime(date.toISOString());
+                      }
+                    }}
+                    className="bg-transparent border-none text-[11px] font-black uppercase tracking-widest outline-none focus:text-primary transition-colors cursor-pointer"
+                    title="Horário de Início"
                   />
-                </motion.div>
-              ) : (
-                <motion.h1 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-4xl lg:text-5xl font-black tracking-tight cursor-text hover:text-primary transition-colors leading-tight"
-                  onClick={() => setIsEditingTitle(true)}
-                >
-                  {meeting?.title}
-                </motion.h1>
-              )}
-            </AnimatePresence>
+                  <span className="text-muted-foreground/30 font-black text-[10px]">→</span>
+                  <span className="text-[11px] font-black text-primary font-mono uppercase tracking-widest bg-primary/5 px-2 py-0.5 rounded-lg border border-primary/10">
+                    {meetingEndTime || '--:--'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 h-fit">
+          <div className="flex items-center gap-4 h-full lg:pt-2">
+            <div className="hidden lg:flex flex-col items-end gap-1 px-4 border-r border-border/50">
+               <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/40">Duração Total</span>
+               <span className="text-2xl font-black font-mono tabular-nums">{totalMin}m</span>
+            </div>
             <Button 
-              className="rounded-full h-14 px-10 font-black text-sm uppercase tracking-widest shadow-xl shadow-primary/30 hover:scale-105 active:scale-95 transition-all bg-primary hover:bg-primary/90"
+              className="rounded-2xl h-14 px-12 font-black text-sm uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all bg-primary hover:bg-primary/90"
               onClick={() => navigate(`/meeting/${id}/run`)}
             >
-              <Play size={20} className="mr-3 fill-current" />
-              Executar Reunião
+              <Play size={22} className="mr-3 fill-current" />
+              Ver Modo Foco
             </Button>
           </div>
         </div>
