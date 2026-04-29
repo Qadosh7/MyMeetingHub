@@ -88,10 +88,23 @@ const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant
       className={`flex items-center justify-between p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/40 transition-all cursor-grab active:cursor-grabbing group ${isDragging ? 'opacity-50' : ''}`}
     >
       <div className="flex items-center gap-2">
-        <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-black text-primary border border-primary/20">
+        <div className={cn(
+          "h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-black border shrink-0",
+          participant.role === 'required' 
+            ? "bg-primary/20 text-primary border-primary/30" 
+            : "bg-muted text-muted-foreground border-border"
+        )}>
           {participant.name.charAt(0).toUpperCase()}
         </div>
-        <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px]">{participant.name}</span>
+        <div className="flex flex-col min-w-0">
+          <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px] leading-tight">{participant.name}</span>
+          <span className={cn(
+            "text-[8px] font-black uppercase tracking-tighter leading-none mt-0.5",
+            participant.role === 'required' ? "text-primary/70" : "text-muted-foreground/50"
+          )}>
+            {participant.role === 'required' ? 'Obrigatório' : 'Opcional'}
+          </span>
+        </div>
       </div>
       <button 
         onClick={(e) => { e.stopPropagation(); onRemove(participant.id); }}
@@ -812,24 +825,33 @@ export default function MeetingPage() {
     }
   };
 
-  const addMeetingParticipant = async (name: string) => {
-    if (!name.trim() || !id) return;
+  const addMeetingParticipant = async (name: string, role: 'required' | 'optional' = 'required') => {
+    const trimmedName = name.trim();
+    if (!trimmedName || !id) {
+      if (!trimmedName) toast.error('Digite o nome do participante');
+      return;
+    }
+
     try {
       const participantData = {
-        name,
-        email: '',
-        role: 'required',
-        created_at: new Date().toISOString()
+        name: trimmedName,
+        role: role,
+        createdAt: new Date().toISOString(),
+        created_at: new Date().toISOString() // Compatibility
       };
+
       const docRef = await addDoc(collection(db, `meetings/${id}/participants`), participantData);
-      const data = { id: docRef.id, ...participantData };
-      const newParticipants = [...meetingParticipants, data];
-      setMeetingParticipants(newParticipants);
-      updateMeetingMetadata({ participants: newParticipants });
-      setNewMPName('');
-      toast.success('Participante adicionado à reunião');
+      const data = { id: docRef.id, ...participantData } as MeetingParticipant;
       
-      ensureGlobalParticipant(name);
+      setMeetingParticipants(prev => {
+        const newParticipants = [...prev, data];
+        updateMeetingMetadata({ participants: newParticipants });
+        return newParticipants;
+      });
+      setNewMPName('');
+      toast.success(`${trimmedName} adicionado como ${role === 'required' ? 'obrigatório' : 'opcional'}`);
+      
+      ensureGlobalParticipant(trimmedName);
     } catch (error: any) {
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/participants`);
     }
@@ -1362,21 +1384,35 @@ export default function MeetingPage() {
                   )}
                 </div>
 
-                <div className="flex gap-2">
+                <div className="space-y-2">
                   <Input 
                     placeholder="Novo nome..."
                     value={newMPName}
                     onChange={(e) => setNewMPName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addMeetingParticipant(newMPName)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        addMeetingParticipant(newMPName, 'required');
+                      }
+                    }}
                     className="h-9 rounded-xl bg-muted/30 border-none text-xs"
                   />
-                  <Button 
-                    size="icon" 
-                    className="h-9 w-9 shrink-0 rounded-xl bg-primary/10 text-primary hover:bg-primary/20"
-                    onClick={() => addMeetingParticipant(newMPName)}
-                  >
-                    <UserPlus size={16} />
-                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button 
+                      size="sm" 
+                      className="h-10 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 text-[10px] font-black uppercase tracking-widest gap-2 shadow-none border-none"
+                      onClick={() => addMeetingParticipant(newMPName, 'required')}
+                    >
+                      <Plus size={14} /> Obrigatório
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      className="h-10 rounded-xl border-border/50 text-[10px] font-black uppercase tracking-widest gap-2 hover:bg-muted"
+                      onClick={() => addMeetingParticipant(newMPName, 'optional')}
+                    >
+                      <Plus size={14} /> Opcional
+                    </Button>
+                  </div>
                 </div>
                 
                 <div className="pt-2 border-t border-border/30">
