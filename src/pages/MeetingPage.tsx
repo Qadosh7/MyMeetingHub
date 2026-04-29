@@ -68,9 +68,10 @@ interface DraggableParticipantProps {
   participant: MeetingParticipant;
   onRemove: (id: string) => void | Promise<void>;
   onUpdate: (id: string, name: string) => void | Promise<void>;
+  onToggleRole: (id: string) => void | Promise<void>;
 }
 
-const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant, onRemove, onUpdate }) => {
+const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant, onRemove, onUpdate, onToggleRole }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(participant.name);
 
@@ -124,14 +125,21 @@ const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant
           />
         ) : (
           <div 
-            className="flex flex-col min-w-0 flex-1 cursor-text"
-            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            className="flex flex-col min-w-0 flex-1"
           >
-            <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px] leading-tight">{participant.name}</span>
-            <span className={cn(
-              "text-[8px] font-black uppercase tracking-tighter leading-none mt-0.5",
-              participant.role === 'required' ? "text-primary/70" : "text-muted-foreground/50"
-            )}>
+            <span 
+              className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px] leading-tight cursor-text hover:text-primary transition-colors"
+              onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            >
+              {participant.name}
+            </span>
+            <span 
+              className={cn(
+                "text-[8px] font-black uppercase tracking-tighter leading-none mt-0.5 cursor-pointer hover:underline",
+                participant.role === 'required' ? "text-primary/70" : "text-muted-foreground/50"
+              )}
+              onClick={(e) => { e.stopPropagation(); onToggleRole(participant.id); }}
+            >
               {participant.role === 'required' ? 'Obrigatório' : 'Opcional'}
             </span>
           </div>
@@ -220,6 +228,12 @@ function SortableAgendaItem({
     });
     setIsEditing(false);
   };
+
+  const currentPresenter = useMemo(() => {
+    const pId = (item as Topic).presenter_id;
+    if (!pId) return null;
+    return meetingParticipants.find(mp => mp.id === pId) || { name: (item as Topic).presenter_name || 'Desconhecido' };
+  }, [item, meetingParticipants]);
 
   const adjustTime = (amount: number) => {
     const newTime = Math.max(1, item.duration_minutes + amount);
@@ -492,8 +506,8 @@ function SortableAgendaItem({
                         ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20 rotate-3 translate-y-[-2px]' 
                         : 'bg-muted/50 text-muted-foreground border-border/50 border-dashed'
                     }`}>
-                      {(item as Topic).presenter_id ? (
-                        <span className="text-base font-black">{(item as Topic).presenter_name?.charAt(0).toUpperCase()}</span>
+                      { (item as Topic).presenter_id ? (
+                        <span className="text-base font-black">{currentPresenter?.name?.charAt(0).toUpperCase()}</span>
                       ) : (
                         <Mic size={22} className="opacity-40" />
                       )}
@@ -501,7 +515,7 @@ function SortableAgendaItem({
                     <div className="flex flex-col min-w-0">
                        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/40 leading-tight">🎤 Apresentador</span>
                        <span className={`text-[14px] font-bold truncate max-w-[140px] ${(item as Topic).presenter_id ? 'text-foreground' : 'text-muted-foreground/30 italic font-medium'}`}>
-                         {(item as Topic).presenter_name || 'Arraste para definir'}
+                         {currentPresenter?.name || 'Arraste para definir'}
                        </span>
                     </div>
                   </div>
@@ -590,10 +604,13 @@ export default function MeetingPage() {
   }, [id]);
 
   useEffect(() => {
-    if (user) {
-      fetchContacts();
-    }
-  }, [user]);
+    const timer = setTimeout(() => {
+      if (user && newMPName) {
+        fetchContacts();
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [newMPName, user]);
 
   const fetchContacts = async () => {
     if (!user) return;
@@ -601,7 +618,7 @@ export default function MeetingPage() {
       const q = query(
         collection(db, `users/${user.uid}/contacts`),
         orderBy('lastUsedAt', 'desc'),
-        limit(50)
+        limit(10)
       );
       const snap = await getDocs(q);
       setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Contact)));
@@ -906,6 +923,8 @@ export default function MeetingPage() {
       };
 
       const docRef = await addDoc(collection(db, `meetings/${id}/participants`), participantData);
+      
+      // We use current Date for local state update to avoid wait for server tick
       const data = { id: docRef.id, ...participantData, createdAt: new Date().toISOString() } as MeetingParticipant;
       
       setMeetingParticipants(prev => {
@@ -915,11 +934,32 @@ export default function MeetingPage() {
       });
       setNewMPName('');
       setShowSuggestions(false);
-      toast.success(`${trimmedName} adicionado como ${role === 'required' ? 'obrigatório' : 'opcional'}`);
+      toast.success(`${trimmedName} adicionado`);
       
       ensureGlobalContact(trimmedName);
     } catch (error: any) {
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/participants`);
+    }
+  };
+
+  const toggleMeetingParticipantRole = async (mpId: string) => {
+    if (!id) return;
+    const participant = meetingParticipants.find(p => p.id === mpId);
+    if (!participant) return;
+
+    const newRole = participant.role === 'required' ? 'optional' : 'required';
+    
+    try {
+      // Optimistic update
+      setMeetingParticipants(prev => prev.map(p => p.id === mpId ? { ...p, role: newRole } : p));
+      
+      await updateDoc(doc(db, `meetings/${id}/participants`, mpId), { role: newRole });
+      
+      // Update metadata async
+      const updatedParticipants = meetingParticipants.map(p => p.id === mpId ? { ...p, role: newRole } : p);
+      updateMeetingMetadata({ participants: updatedParticipants });
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/participants/${mpId}`);
     }
   };
 
@@ -958,12 +998,13 @@ export default function MeetingPage() {
     try {
       await deleteDoc(doc(db, `meetings/${id}/participants`, mpId));
       
-      const newParticipants = meetingParticipants.filter(p => p.id !== mpId);
-      setMeetingParticipants(newParticipants);
-      updateMeetingMetadata({ participants: newParticipants });
-      // Topic assignments need to be cleared too. 
-      // This is more complex because they are in subcollections of topics.
-      // We'll iterate through all topics and clear assignments for this MP.
+      setMeetingParticipants(prev => {
+        const newParticipants = prev.filter(p => p.id !== mpId);
+        updateMeetingMetadata({ participants: newParticipants });
+        return newParticipants;
+      });
+
+      // Clear topic assignments
       setParticipants(prev => prev.filter(p => p.meeting_participant_id !== mpId));
       
       // Update local items for presenter reset
@@ -1000,13 +1041,13 @@ export default function MeetingPage() {
     try {
       const tpData = { 
         meeting_participant_id: meetingParticipantId,
-        participant_name: mp.name,
+        // participant_name removed to avoid duplication as per request
         role,
-        created_at: new Date().toISOString()
+        created_at: serverTimestamp()
       };
       
       const docRef = await addDoc(collection(db, `meetings/${id}/topics/${topicId}/topic_participants`), tpData);
-      const data = { id: docRef.id, topic_id: topicId, ...tpData };
+      const data = { id: docRef.id, topic_id: topicId, ...tpData, created_at: new Date().toISOString() } as any;
       setParticipants(prev => [...prev, data]);
     } catch (error: any) {
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/topics/${topicId}/topic_participants`);
@@ -1051,12 +1092,12 @@ export default function MeetingPage() {
       await Promise.all(missingMPs.map(async (mp) => {
         const tpData = {
           meeting_participant_id: mp.id,
-          participant_name: mp.name,
+          // participant_name removed for normalization
           role,
-          created_at: new Date().toISOString()
+          created_at: serverTimestamp()
         };
         const docRef = await addDoc(collection(db, `meetings/${id}/topics/${topicId}/topic_participants`), tpData);
-        addedParticipants.push({ id: docRef.id, topic_id: topicId, ...tpData });
+        addedParticipants.push({ id: docRef.id, topic_id: topicId, ...tpData, created_at: new Date().toISOString() } as any);
       }));
       
       setParticipants(prev => [...prev, ...addedParticipants]);
@@ -1068,25 +1109,29 @@ export default function MeetingPage() {
 
   const ensureGlobalContact = async (name: string): Promise<void> => {
     if (!user) return;
+    const trimmedName = name.trim();
+    const normalizedName = trimmedName.toLowerCase();
     
     try {
-      // Find by name
+      // Find by normalizedName
       const q = query(
         collection(db, `users/${user.uid}/contacts`),
-        where('name', '==', name)
+        where('normalizedName', '==', normalizedName)
       );
       const snap = await getDocs(q);
       
       if (!snap.empty) {
-        // Update lastUsedAt
+        // Update lastUsedAt and potentially the display name (if case changed)
         const contactId = snap.docs[0].id;
         await updateDoc(doc(db, `users/${user.uid}/contacts`, contactId), {
+          name: trimmedName, // Keep display name fresh
           lastUsedAt: serverTimestamp()
         });
       } else {
-        // Create new
+        // Create new with normalization
         await addDoc(collection(db, `users/${user.uid}/contacts`), {
-          name,
+          name: trimmedName,
+          normalizedName,
           lastUsedAt: serverTimestamp()
         });
       }
@@ -1489,6 +1534,7 @@ export default function MeetingPage() {
                         participant={mp} 
                         onRemove={removeMeetingParticipant}
                         onUpdate={updateMeetingParticipant}
+                        onToggleRole={toggleMeetingParticipantRole}
                       />
                     ))}
                   
