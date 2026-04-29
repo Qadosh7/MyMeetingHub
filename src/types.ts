@@ -62,8 +62,15 @@ export interface MeetingParticipant {
   name: string;
   email?: string | null;
   role: 'required' | 'optional';
-  createdAt: string;
-  created_at?: string; // Keeping for compatibility
+  createdAt: any; // Using any for serverTimestamp compatibility
+  created_at?: string; 
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  email?: string | null;
+  lastUsedAt: any;
 }
 
 export interface MeetingExecutionLog {

@@ -2,10 +2,10 @@ import * as React from 'react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { db } from '@/src/lib/firebase';
-import { collection, doc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, query, where, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, query, where, orderBy, serverTimestamp, setDoc, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '@/src/lib/firestoreUtils';
 import { useAuth } from '@/src/hooks/useAuth';
-import { Meeting, Topic, Break, AgendaItem, TopicParticipant, Participant, MeetingParticipant } from '@/src/types';
+import { Meeting, Topic, Break, AgendaItem, TopicParticipant, Participant, MeetingParticipant, Contact } from '@/src/types';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -67,17 +67,29 @@ interface SortableAgendaItemProps {
 interface DraggableParticipantProps {
   participant: MeetingParticipant;
   onRemove: (id: string) => void | Promise<void>;
+  onUpdate: (id: string, name: string) => void | Promise<void>;
 }
 
-const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant, onRemove }) => {
+const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant, onRemove, onUpdate }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(participant.name);
+
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `participant-${participant.id}`,
-    data: { participant }
+    data: { participant },
+    disabled: isEditing
   });
 
   const style = transform ? {
     transform: CSS.Translate.toString(transform),
   } : undefined;
+
+  const handleUpdate = () => {
+    if (editName.trim() && editName !== participant.name) {
+      onUpdate(participant.id, editName.trim());
+    }
+    setIsEditing(false);
+  };
 
   return (
     <div
@@ -85,9 +97,13 @@ const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant
       style={style}
       {...listeners}
       {...attributes}
-      className={`flex items-center justify-between p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/40 transition-all cursor-grab active:cursor-grabbing group ${isDragging ? 'opacity-50' : ''}`}
+      className={cn(
+        "flex items-center justify-between p-2 rounded-xl border border-border/50 bg-muted/20 hover:bg-muted/40 transition-all group",
+        isDragging ? "opacity-50" : "",
+        !isEditing && "cursor-grab active:cursor-grabbing"
+      )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-1 min-w-0">
         <div className={cn(
           "h-7 w-7 rounded-full flex items-center justify-center text-[10px] font-black border shrink-0",
           participant.role === 'required' 
@@ -96,22 +112,40 @@ const DraggableParticipant: React.FC<DraggableParticipantProps> = ({ participant
         )}>
           {participant.name.charAt(0).toUpperCase()}
         </div>
-        <div className="flex flex-col min-w-0">
-          <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px] leading-tight">{participant.name}</span>
-          <span className={cn(
-            "text-[8px] font-black uppercase tracking-tighter leading-none mt-0.5",
-            participant.role === 'required' ? "text-primary/70" : "text-muted-foreground/50"
-          )}>
-            {participant.role === 'required' ? 'Obrigatório' : 'Opcional'}
-          </span>
-        </div>
+        
+        {isEditing ? (
+          <Input 
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleUpdate}
+            onKeyDown={(e) => e.key === 'Enter' && handleUpdate()}
+            autoFocus
+            className="h-7 text-[11px] font-bold bg-background border-primary/20 flex-1"
+          />
+        ) : (
+          <div 
+            className="flex flex-col min-w-0 flex-1 cursor-text"
+            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+          >
+            <span className="text-[11px] font-bold text-foreground/80 truncate max-w-[120px] leading-tight">{participant.name}</span>
+            <span className={cn(
+              "text-[8px] font-black uppercase tracking-tighter leading-none mt-0.5",
+              participant.role === 'required' ? "text-primary/70" : "text-muted-foreground/50"
+            )}>
+              {participant.role === 'required' ? 'Obrigatório' : 'Opcional'}
+            </span>
+          </div>
+        )}
       </div>
-      <button 
-        onClick={(e) => { e.stopPropagation(); onRemove(participant.id); }}
-        className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-all"
-      >
-        <X size={12} />
-      </button>
+      
+      {!isEditing && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); onRemove(participant.id); }}
+          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-destructive transition-all"
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 }
@@ -541,6 +575,8 @@ export default function MeetingPage() {
   
   const [participantSearch, setParticipantSearch] = useState('');
   const [newMPName, setNewMPName] = useState('');
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -552,6 +588,35 @@ export default function MeetingPage() {
       fetchMeetingData();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (user) {
+      fetchContacts();
+    }
+  }, [user]);
+
+  const fetchContacts = async () => {
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, `users/${user.uid}/contacts`),
+        orderBy('lastUsedAt', 'desc'),
+        limit(50)
+      );
+      const snap = await getDocs(q);
+      setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Contact)));
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+    }
+  };
+
+  const suggestions = useMemo(() => {
+    if (!newMPName) return [];
+    return contacts.filter(c => 
+      c.name.toLowerCase().includes(newMPName.toLowerCase()) && 
+      !meetingParticipants.some(mp => mp.name.toLowerCase() === c.name.toLowerCase())
+    ).slice(0, 5);
+  }, [newMPName, contacts, meetingParticipants]);
 
   const toggleFavorite = async () => {
     if (!meeting || !id) return;
@@ -828,7 +893,7 @@ export default function MeetingPage() {
   const addMeetingParticipant = async (name: string, role: 'required' | 'optional' = 'required') => {
     const trimmedName = name.trim();
     if (!trimmedName || !id) {
-      if (!trimmedName) toast.error('Digite o nome do participante');
+      if (!trimmedName) toast.error('Digite o nome do profissional');
       return;
     }
 
@@ -836,12 +901,12 @@ export default function MeetingPage() {
       const participantData = {
         name: trimmedName,
         role: role,
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
         created_at: new Date().toISOString() // Compatibility
       };
 
       const docRef = await addDoc(collection(db, `meetings/${id}/participants`), participantData);
-      const data = { id: docRef.id, ...participantData } as MeetingParticipant;
+      const data = { id: docRef.id, ...participantData, createdAt: new Date().toISOString() } as MeetingParticipant;
       
       setMeetingParticipants(prev => {
         const newParticipants = [...prev, data];
@@ -849,11 +914,42 @@ export default function MeetingPage() {
         return newParticipants;
       });
       setNewMPName('');
+      setShowSuggestions(false);
       toast.success(`${trimmedName} adicionado como ${role === 'required' ? 'obrigatório' : 'opcional'}`);
       
-      ensureGlobalParticipant(trimmedName);
+      ensureGlobalContact(trimmedName);
     } catch (error: any) {
       handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/participants`);
+    }
+  };
+
+  const updateMeetingParticipant = async (mpId: string, name: string) => {
+    if (!id) return;
+    try {
+      await updateDoc(doc(db, `meetings/${id}/participants`, mpId), { name });
+      setMeetingParticipants(prev => prev.map(p => p.id === mpId ? { ...p, name } : p));
+      
+      // Update assignments too
+      setParticipants(prev => prev.map(p => p.meeting_participant_id === mpId ? { ...p, name } : p));
+      
+      // Update presentations
+      setItems(prev => prev.map(item => {
+        if (item.type === 'topic' && item.presenter_id === mpId) {
+          return { ...item, presenter_name: name };
+        }
+        return item;
+      }));
+
+      // Persistence: Presenter fields are on the topic doc itself
+      const topicsWithThisPresenter = items.filter(i => i.type === 'topic' && (i as Topic).presenter_id === mpId);
+      await Promise.all(topicsWithThisPresenter.map(async (t) => {
+         await updateDoc(doc(db, `meetings/${id}/topics`, t.id), { presenter_name: name });
+      }));
+
+      toast.success('Nome atualizado');
+      ensureGlobalContact(name);
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/participants/${mpId}`);
     }
   };
 
@@ -970,19 +1066,33 @@ export default function MeetingPage() {
     }
   };
 
-  const ensureGlobalParticipant = async (name: string): Promise<Participant | null> => {
-    if (!user) return null;
-    const existing = globalParticipants.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (existing) return existing;
-
+  const ensureGlobalContact = async (name: string): Promise<void> => {
+    if (!user) return;
+    
     try {
-      const participantData = { name, user_id: user.uid };
-      const docRef = await addDoc(collection(db, 'global_participants'), participantData);
-      const data = { id: docRef.id, ...participantData };
-      setGlobalParticipants(prev => [...prev, data]);
-      return data;
-    } catch {
-      return null;
+      // Find by name
+      const q = query(
+        collection(db, `users/${user.uid}/contacts`),
+        where('name', '==', name)
+      );
+      const snap = await getDocs(q);
+      
+      if (!snap.empty) {
+        // Update lastUsedAt
+        const contactId = snap.docs[0].id;
+        await updateDoc(doc(db, `users/${user.uid}/contacts`, contactId), {
+          lastUsedAt: serverTimestamp()
+        });
+      } else {
+        // Create new
+        await addDoc(collection(db, `users/${user.uid}/contacts`), {
+          name,
+          lastUsedAt: serverTimestamp()
+        });
+      }
+      fetchContacts();
+    } catch (error) {
+      console.error('Error ensuring contact:', error);
     }
   };
 
@@ -1374,7 +1484,12 @@ export default function MeetingPage() {
                   {meetingParticipants
                     .filter(mp => mp.name.toLowerCase().includes(participantSearch.toLowerCase()))
                     .map(mp => (
-                      <DraggableParticipant key={mp.id} participant={mp} onRemove={removeMeetingParticipant} />
+                      <DraggableParticipant 
+                        key={mp.id} 
+                        participant={mp} 
+                        onRemove={removeMeetingParticipant}
+                        onUpdate={updateMeetingParticipant}
+                      />
                     ))}
                   
                   {meetingParticipants.filter(mp => mp.name.toLowerCase().includes(participantSearch.toLowerCase())).length === 0 && (
@@ -1384,18 +1499,46 @@ export default function MeetingPage() {
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <Input 
-                    placeholder="Novo nome..."
-                    value={newMPName}
-                    onChange={(e) => setNewMPName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        addMeetingParticipant(newMPName, 'required');
-                      }
-                    }}
-                    className="h-9 rounded-xl bg-muted/30 border-none text-xs"
-                  />
+                <div className="space-y-2 relative">
+                  <div className="relative">
+                    <Input 
+                      placeholder="Novo nome..."
+                      value={newMPName}
+                      onChange={(e) => {
+                        setNewMPName(e.target.value);
+                        setShowSuggestions(true);
+                      }}
+                      onBlur={() => {
+                        // Delay hide suggestions to allow clicking one
+                        setTimeout(() => setShowSuggestions(false), 200);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (e.shiftKey) {
+                            addMeetingParticipant(newMPName, 'optional');
+                          } else {
+                            addMeetingParticipant(newMPName, 'required');
+                          }
+                        }
+                      }}
+                      className="h-9 rounded-xl bg-muted/30 border-none text-xs"
+                    />
+                    
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute bottom-full left-0 w-full mb-1 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-20">
+                        {suggestions.map(s => (
+                          <button
+                            key={s.id}
+                            className="w-full px-3 py-2 text-left text-[11px] font-bold hover:bg-muted transition-colors flex items-center justify-between group"
+                            onClick={() => addMeetingParticipant(s.name, 'required')}
+                          >
+                            <span>{s.name}</span>
+                            <UserPlus size={12} className="opacity-0 group-hover:opacity-40" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button 
                       size="sm" 
