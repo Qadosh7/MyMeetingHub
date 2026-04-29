@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      // No admin logic requested, but helper placeholder
+      return false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidMeeting(data) {
+      return data.keys().hasAll(['user_id', 'title', 'created_at'])
+        && data.user_id == request.auth.uid
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 500
+        && data.get('status', 'planning') in ['planning', 'in_progress', 'completed']
+        && (data.get('tags', []) is list)
+        && (data.get('total_duration', 0) is number)
+        && (data.get('topics_count', 0) is number)
+        && (data.get('participants_count', 0) is number)
+        && data.created_at is string;
+    }
+
+    function isValidTopic(data) {
+      return data.keys().hasAll(['title', 'duration_minutes', 'order_index', 'type'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 500
+        && data.duration_minutes is number && data.duration_minutes >= 0
+        && data.order_index is number
+        && data.type == 'topic';
+    }
+
+    function isValidBreak(data) {
+      return data.keys().hasAll(['title', 'duration_minutes', 'order_index', 'type'])
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 500
+        && data.duration_minutes is number && data.duration_minutes >= 0
+        && data.order_index is number
+        && data.type == 'break';
+    }
+
+    function isValidMeetingParticipant(data) {
+      return data.keys().hasAll(['name', 'created_at'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.get('role', 'required') in ['required', 'optional']
+        && data.created_at is string;
+    }
+
+    function isValidTopicParticipant(data) {
+      return data.keys().hasAll(['meeting_participant_id', 'role', 'created_at'])
+        && data.meeting_participant_id is string
+        && data.role in ['required', 'optional']
+        && data.created_at is string;
+    }
+
+    function isValidExecutionLog(data) {
+      return data.keys().hasAll(['topic_id', 'topic_type', 'planned_duration', 'actual_duration', 'started_at', 'ended_at'])
+        && data.topic_id is string
+        && data.topic_type in ['topic', 'break']
+        && data.planned_duration is number
+        && data.actual_duration is number
+        && data.started_at is string
+        && data.ended_at is string;
+    }
+
+    function isValidGlobalParticipant(data) {
+      return data.keys().hasAll(['user_id', 'name'])
+        && data.user_id == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200;
+    }
+
+    // --- Rules ---
+
+    match /meetings/{meetingId} {
+      allow create: if isSignedIn() && isValidId(meetingId) && isValidMeeting(incoming());
+      allow get: if isSignedIn() && isOwner(existing().user_id);
+      allow list: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow update: if isSignedIn() && isOwner(existing().user_id) && isValidMeeting(incoming());
+      allow delete: if isSignedIn() && isOwner(existing().user_id);
+
+      match /topics/{topicId} {
+        allow get, list: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+        allow create: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidTopic(incoming());
+        allow update: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidTopic(incoming());
+        allow delete: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+
+        match /topic_participants/{participantId} {
+           allow read, write: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+        }
+      }
+
+      match /breaks/{breakId} {
+        allow get, list: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+        allow create: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidBreak(incoming());
+        allow update: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidBreak(incoming());
+        allow delete: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+      }
+
+      match /participants/{participantId} {
+        allow get, list: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+        allow create: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidMeetingParticipant(incoming());
+        allow update: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidMeetingParticipant(incoming());
+        allow delete: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+      }
+
+      match /executionLogs/{logId} {
+        allow get, list: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+        allow create: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidExecutionLog(incoming());
+        allow update: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid && isValidExecutionLog(incoming());
+        allow delete: if isSignedIn() && get(/databases/$(database)/documents/meetings/$(meetingId)).data.user_id == request.auth.uid;
+      }
+    }
+
+    match /global_participants/{participantId} {
+      allow create: if isSignedIn() && isValidId(participantId) && isValidGlobalParticipant(incoming());
+      allow get, list: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow update: if isSignedIn() && isOwner(existing().user_id) && isValidGlobalParticipant(incoming());
+      allow delete: if isSignedIn() && isOwner(existing().user_id);
+    }
+  }
+}

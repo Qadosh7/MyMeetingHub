@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/src/lib/supabase';
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc, orderBy, serverTimestamp, setDoc } from 'firebase/firestore';
+import { db } from '@/src/lib/firebase';
 import { useAuth } from '@/src/hooks/useAuth';
 import { Meeting } from '@/src/types';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import { useMemo } from 'react';
 import { cn } from '@/src/lib/utils';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { handleFirestoreError, OperationType } from '@/src/lib/firestoreUtils';
 
 type SortOption = 'recent' | 'oldest' | 'longest' | 'shortest' | 'participants';
 type DateFilter = 'all' | 'today' | 'week' | 'month';
@@ -44,7 +46,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchMeetings();
-  }, []);
+  }, [user]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -89,8 +91,7 @@ export default function Dashboard() {
       }
 
       // Duration
-      const totalDuration = (meeting.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) +
-                           (meeting.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+      const totalDuration = meeting.total_duration || 0;
       
       if (durationFilter === 'short' && totalDuration >= 30) return false;
       if (durationFilter === 'medium' && (totalDuration < 30 || totalDuration > 90)) return false;
@@ -121,14 +122,14 @@ export default function Dashboard() {
       if (sortBy === 'recent') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       if (sortBy === 'oldest') return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       
-      const durationA = (a.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) + (a.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
-      const durationB = (b.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) + (b.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
+      const durationA = a.total_duration || 0;
+      const durationB = b.total_duration || 0;
       
       if (sortBy === 'longest') return durationB - durationA;
       if (sortBy === 'shortest') return durationA - durationB;
       
-      const participantsA = new Set(a.topics?.flatMap(t => t.topic_participants?.map(p => p.participant_name) || [])).size;
-      const participantsB = new Set(b.topics?.flatMap(t => t.topic_participants?.map(p => p.participant_name) || [])).size;
+      const participantsA = a.participants_count || 0;
+      const participantsB = b.participants_count || 0;
       
       if (sortBy === 'participants') return participantsB - participantsA;
       
@@ -147,12 +148,8 @@ export default function Dashboard() {
   const toggleFavorite = async (e: React.MouseEvent, meetingId: string, currentStatus: boolean) => {
     e.stopPropagation();
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ is_favorite: !currentStatus })
-        .eq('id', meetingId);
-
-      if (error) throw error;
+      const meetingRef = doc(db, 'meetings', meetingId);
+      await updateDoc(meetingRef, { is_favorite: !currentStatus });
       setMeetings(meetings.map(m => m.id === meetingId ? { ...m, is_favorite: !currentStatus } : m));
       toast.success(!currentStatus ? 'Adicionado aos favoritos' : 'Removido dos favoritos');
     } catch (error: any) {
@@ -162,10 +159,8 @@ export default function Dashboard() {
 
   const updateLastAccessed = async (meetingId: string) => {
     try {
-      await supabase
-        .from('meetings')
-        .update({ last_accessed: new Date().toISOString() })
-        .eq('id', meetingId);
+      const meetingRef = doc(db, 'meetings', meetingId);
+      await updateDoc(meetingRef, { last_accessed: new Date().toISOString() });
     } catch (error) {
       console.error('Error updating last accessed:', error);
     }
@@ -182,32 +177,19 @@ export default function Dashboard() {
 
   const fetchMeetings = async () => {
     if (!user) return;
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('meetings')
-        .select(`
-          *,
-          topics (
-            id,
-            duration_minutes,
-            presenter,
-            presenter_name,
-            presenter_id,
-            topic_participants (
-              participant_name
-            )
-          ),
-          breaks (
-            duration_minutes
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setMeetings(data || []);
+      const q = query(collection(db, 'meetings'), where('user_id', '==', user.uid), orderBy('created_at', 'desc'));
+      const querySnapshot = await getDocs(q);
+      
+      const meetingsData = querySnapshot.docs.map((docSnap) => ({ 
+        id: docSnap.id, 
+        ...docSnap.data() 
+      } as Meeting));
+      
+      setMeetings(meetingsData);
     } catch (error: any) {
-      toast.error('Erro ao carregar reuniões');
+      handleFirestoreError(error, OperationType.LIST, 'meetings');
     } finally {
       setLoading(false);
     }
@@ -219,117 +201,82 @@ export default function Dashboard() {
       return;
     }
     try {
-      const basicPayload = { 
-        title: newMeetingTitle, 
-        user_id: user.id
-      };
-      
-      const fullPayload = {
-        ...basicPayload,
+      const meetingData = {
+        title: newMeetingTitle,
+        user_id: user.uid,
         status: 'planning',
         event_date: newMeetingDate,
-        start_time: new Date(`${newMeetingDate}T09:00:00`).toISOString(), // Default to 9am on that day
-        updated_at: new Date().toISOString()
+        start_time: new Date(`${newMeetingDate}T09:00:00`).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_favorite: false,
+        tags: [],
+        total_duration: 0,
+        topics_count: 0,
+        participants_count: 0
       };
 
-      // Try full professional schema first
-      let { data, error } = await supabase
-        .from('meetings')
-        .insert([fullPayload])
-        .select()
-        .single();
-
-      // If missing columns, fallback to basic schema
-      if (error && error.message.includes('column') && error.message.includes('not found')) {
-        console.warn('Advanced schema columns missing, falling back to basic schema');
-        const fallback = await supabase
-          .from('meetings')
-          .insert([basicPayload])
-          .select()
-          .single();
-        data = fallback.data;
-        error = fallback.error;
-      }
-
-      if (error) {
-        console.error('Supabase error creating meeting:', error);
-        throw error;
-      }
-      toast.success('Reunião criada!');
-      setMeetings([data, ...meetings]);
+      const docRef = await addDoc(collection(db, 'meetings'), meetingData);
+      const newMeeting = { id: docRef.id, ...meetingData, topics: [], breaks: [] };
+      
+      setMeetings([newMeeting as Meeting, ...meetings]);
       setIsCreateOpen(false);
       setNewMeetingTitle('');
       setNewMeetingDate(new Date().toISOString().split('T')[0]);
-      navigate(`/meeting/${data.id}`);
+      toast.success('Reunião criada com sucesso!');
+      navigate(`/meeting/${docRef.id}`);
     } catch (error: any) {
-      console.error('Catch error creating meeting:', error);
-      toast.error(`Erro ao criar reunião: ${error.message || 'Erro desconhecido'}`);
-      toast.info('Dica: Verifique se as novas tabelas foram criadas no Supabase (veja supabase_schema.sql)');
+      handleFirestoreError(error, OperationType.WRITE, 'meetings');
     }
   };
 
   const deleteMeeting = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir esta reunião?')) return;
     try {
-      const { error } = await supabase.from('meetings').delete().eq('id', id);
-      if (error) throw error;
+      await deleteDoc(doc(db, 'meetings', id));
       setMeetings(meetings.filter((m) => m.id !== id));
       toast.success('Reunião excluída');
     } catch (error: any) {
-      toast.error('Erro ao excluir reunião');
+      handleFirestoreError(error, OperationType.DELETE, `meetings/${id}`);
     }
   };
 
   const duplicateMeeting = async (meeting: Meeting) => {
     if (!user) return;
     try {
-      const basicPayload = { 
-        title: `${meeting.title} (Cópia)`, 
-        user_id: user.id
-      };
-      
-      const fullPayload = {
-        ...basicPayload,
+      const meetingData = {
+        title: `${meeting.title} (Cópia)`,
+        user_id: user.uid,
         status: 'planning',
         event_date: meeting.event_date || new Date().toISOString().split('T')[0],
         start_time: meeting.start_time || new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_favorite: false,
+        tags: meeting.tags || []
       };
 
-      let { data: newMeeting, error: mError } = await supabase
-        .from('meetings')
-        .insert([fullPayload])
-        .select()
-        .single();
-
-      if (mError && mError.message.includes('column') && mError.message.includes('not found')) {
-        const fallback = await supabase
-          .from('meetings')
-          .insert([basicPayload])
-          .select()
-          .single();
-        newMeeting = fallback.data;
-        mError = fallback.error;
+      const docRef = await addDoc(collection(db, 'meetings'), meetingData);
+      
+      // Duplicate topics and breaks
+      if (meeting.topics && meeting.topics.length > 0) {
+        await Promise.all(meeting.topics.map(async (topic) => {
+          const { id, ...topicData } = topic;
+          // Clean up topic_participants if they exist in the object (though they shouldn't be here in this way)
+          await addDoc(collection(db, `meetings/${docRef.id}/topics`), topicData);
+        }));
       }
-
-      if (mError) throw mError;
-
-      const { data: topics } = await supabase.from('topics').select('*').eq('meeting_id', meeting.id);
-      const { data: breaks } = await supabase.from('breaks').select('*').eq('meeting_id', meeting.id);
-
-      if (topics && topics.length > 0) {
-        const topicsToInsert = topics.map(({ id, ...rest }) => ({ ...rest, meeting_id: newMeeting.id }));
-        await supabase.from('topics').insert(topicsToInsert);
-      }
-      if (breaks && breaks.length > 0) {
-        const breaksToInsert = breaks.map(({ id, ...rest }) => ({ ...rest, meeting_id: newMeeting.id }));
-        await supabase.from('breaks').insert(breaksToInsert);
+      if (meeting.breaks && meeting.breaks.length > 0) {
+        await Promise.all(meeting.breaks.map(async (brk) => {
+          const { id, ...breakData } = brk;
+          await addDoc(collection(db, `meetings/${docRef.id}/breaks`), breakData);
+        }));
       }
 
       toast.success('Reunião duplicada!');
       fetchMeetings();
     } catch (error: any) {
-      toast.error('Erro ao duplicar reunião');
+      handleFirestoreError(error, OperationType.WRITE, 'meetings/duplicate');
     }
   };
 
@@ -408,11 +355,11 @@ export default function Dashboard() {
       todayMeetings.forEach(m2 => {
         if (m1.id === m2.id) return;
         const start1 = new Date(m1.start_time || '').getTime();
-        const dur1 = (m1.topics?.reduce((a, t) => a + t.duration_minutes, 0) || 0) * 60000;
+        const dur1 = (m1.total_duration || 0) * 60000;
         const end1 = start1 + dur1;
 
         const start2 = new Date(m2.start_time || '').getTime();
-        const dur2 = (m2.topics?.reduce((a, t) => a + t.duration_minutes, 0) || 0) * 60000;
+        const dur2 = (m2.total_duration || 0) * 60000;
         const end2 = start2 + dur2;
 
         if (start1 < end2 && start2 < end1) {
@@ -503,7 +450,7 @@ export default function Dashboard() {
             { label: 'Tempo Planejado', value: `${meetings.filter(m => {
                 const d = m.event_date ? new Date(m.event_date + 'T00:00:00') : null;
                 return d?.toDateString() === new Date().toDateString();
-              }).reduce((acc, m) => acc + (m.topics?.reduce((a, t) => a + t.duration_minutes, 0) || 0), 0)}m`, icon: <Clock size={18} />, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+              }).reduce((acc, m) => acc + (m.total_duration || 0), 0)}m`, icon: <Clock size={18} />, color: 'text-purple-500', bg: 'bg-purple-500/10' },
             { label: 'Eficiência Geral', value: '94%', icon: <TrendingUp size={18} />, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
             { label: 'Próxima Reunião', value: groupedMeetings[0]?.meetings[0]?.start_time ? format(parseISO(groupedMeetings[0].meetings[0].start_time), 'HH:mm') : '--:--', icon: <Play size={18} />, color: 'text-primary', bg: 'bg-primary/10' },
           ].map((kpi, i) => (
@@ -817,26 +764,14 @@ export default function Dashboard() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                   {group.meetings.map((meeting) => {
-                    const totalDuration = (meeting.topics?.reduce((acc, t) => acc + t.duration_minutes, 0) || 0) +
-                                         (meeting.breaks?.reduce((acc, b) => acc + b.duration_minutes, 0) || 0);
-                    
-                    const participantsSet = new Set<string>();
-                    meeting.topics?.forEach(t => {
-                      t.topic_participants?.forEach(p => participantsSet.add(p.participant_name));
-                    });
-                    const participantCount = participantsSet.size;
-                    const participantsList = Array.from(participantsSet);
-
-                    const topicCount = meeting.topics?.length || 0;
-                    const prepProgress = topicCount > 0 ? Math.round(
-                      ((meeting.topics?.filter(t => (t.presenter_name || t.presenter)).length || 0) +
-                       (meeting.topics?.filter(t => t.duration_minutes > 0).length || 0)) / (topicCount * 2) * 100
-                    ) : 0;
+                    const totalDuration = meeting.total_duration || 0;
+                    const participantCount = meeting.participants_count || 0;
+                    const topicCount = meeting.topics_count || 0;
+                    const prepProgress = meeting.status === 'completed' ? 100 : (topicCount > 0 ? 50 : 0);
 
                     const meetingStart = meeting.start_time ? new Date(meeting.start_time) : null;
                     const meetingEnd = meetingStart ? new Date(meetingStart.getTime() + totalDuration * 60000) : null;
 
-                    const hasNoPresenter = meeting.topics?.some(t => !t.presenter && !t.presenter_name);
                     const isTooLong = totalDuration > 90;
 
                     const formatDateLabel = (dateStr: string) => {
@@ -935,11 +870,6 @@ export default function Dashboard() {
                         </div>
 
                         <div className="flex flex-wrap gap-2 mb-8 min-h-[24px]">
-                           {hasNoPresenter && (
-                              <Badge variant="outline" className="rounded-lg bg-amber-500/5 text-amber-600 border-amber-500/20 text-[9px] font-black uppercase tracking-wider px-2 py-1 gap-1">
-                                 <AlertCircle size={10} /> Sem Apresentador
-                              </Badge>
-                           )}
                            {isTooLong && (
                               <Badge variant="outline" className="rounded-lg bg-red-500/5 text-red-500 border-red-500/20 text-[9px] font-black uppercase tracking-wider px-2 py-1 gap-1">
                                  <Clock size={10} /> Muito Longa
@@ -947,24 +877,18 @@ export default function Dashboard() {
                            )}
                         </div>
 
-                        <div className="mt-auto pt-6 border-t border-border/40 flex items-center justify-between">
-                           <div className="flex -space-x-2.5">
-                              {participantsList.slice(0, 3).map((name, idx) => (
-                                <div key={idx} className="h-9 w-9 rounded-full bg-muted border-[3px] border-card flex items-center justify-center shadow-sm overflow-hidden" title={name}>
-                                  <span className="text-[10px] font-black text-muted-foreground/60">{name.charAt(0).toUpperCase()}</span>
-                                </div>
-                              ))}
-                              {participantCount > 3 && (
-                                <div className="h-9 w-9 rounded-full bg-primary/10 border-[3px] border-card flex items-center justify-center text-[10px] font-black text-primary shadow-sm">
-                                  +{participantCount - 3}
-                                </div>
-                              )}
-                              {participantCount === 0 && (
-                                <div className="h-9 w-9 rounded-full bg-muted border-[3px] border-card flex items-center justify-center opacity-30 shadow-sm">
-                                  <User size={14} />
-                                </div>
-                              )}
-                           </div>
+                         <div className="mt-auto pt-6 border-t border-border/40 flex items-center justify-between">
+                            <div className="flex -space-x-2.5">
+                               {participantCount > 0 ? (
+                                 <div className="h-9 w-9 rounded-full bg-primary/10 border-[3px] border-card flex items-center justify-center text-[10px] font-black text-primary shadow-sm" title={`${participantCount} participantes`}>
+                                   {participantCount}
+                                 </div>
+                               ) : (
+                                 <div className="h-9 w-9 rounded-full bg-muted border-[3px] border-card flex items-center justify-center opacity-30 shadow-sm">
+                                   <User size={14} />
+                                 </div>
+                               )}
+                            </div>
                            
                            <Button 
                              onClick={(e) => { e.stopPropagation(); navigate(`/meeting/${meeting.id}/run`); }}

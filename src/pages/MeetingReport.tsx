@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '@/src/lib/supabase';
-import { Meeting, MeetingExecutionLog, AgendaItem, TopicParticipant, MeetingParticipant } from '@/src/types';
+import { db } from '@/src/lib/firebase';
+import { collection, doc, getDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '@/src/lib/firestoreUtils';
+import { Meeting, MeetingExecutionLog, AgendaItem, TopicParticipant, MeetingParticipant, Topic, Break } from '@/src/types';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -29,51 +31,49 @@ export default function MeetingReport() {
 
   useEffect(() => {
     async function fetchData() {
+      if (!id) return;
       try {
-        const { data: meetingData, error: mError } = await supabase
-          .from('meetings')
-          .select('*')
-          .eq('id', id)
-          .single();
-        if (mError) throw mError;
-        setMeeting(meetingData);
+        setLoading(true);
+        const meetingSnap = await getDoc(doc(db, 'meetings', id));
+        if (!meetingSnap.exists()) {
+          toast.error('Reunião não encontrada.');
+          navigate('/');
+          return;
+        }
+        setMeeting({ id: meetingSnap.id, ...meetingSnap.data() } as Meeting);
 
-        const { data: topicsData } = await supabase.from('topics').select('*').eq('meeting_id', id);
-        const { data: breaksData } = await supabase.from('breaks').select('*').eq('meeting_id', id);
+        const topicsSnap = await getDocs(collection(db, `meetings/${id}/topics`));
+        const topics = topicsSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'topic' as const })) as Topic[];
+
+        const breaksSnap = await getDocs(collection(db, `meetings/${id}/breaks`));
+        const breaks = breaksSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'break' as const })) as Break[];
         
-        const merged: AgendaItem[] = [
-          ...(topicsData || []).map(t => ({ ...t, type: 'topic' as const })),
-          ...(breaksData || []).map(b => ({ ...b, type: 'break' as const }))
-        ].sort((a, b) => a.order_index - b.order_index);
+        const merged: AgendaItem[] = [...topics, ...breaks].sort((a, b) => a.order_index - b.order_index);
         setItems(merged);
 
-        const { data: tpData } = await supabase
-          .from('topic_participants')
-          .select('*')
-          .in('topic_id', (topicsData || []).map(t => t.id));
-        setTopicParticipants(tpData || []);
+        const allTopicParticipants: TopicParticipant[] = [];
+        await Promise.all(topics.map(async (topic) => {
+          const tpSnap = await getDocs(collection(db, `meetings/${id}/topics/${topic.id}/topic_participants`));
+          tpSnap.docs.forEach(d => {
+            allTopicParticipants.push({ id: d.id, topic_id: topic.id, ...d.data() } as TopicParticipant);
+          });
+        }));
+        setTopicParticipants(allTopicParticipants);
 
-        const { data: mpData } = await supabase
-          .from('meeting_participants')
-          .select('*')
-          .eq('meeting_id', id);
-        setMeetingParticipants(mpData || []);
+        const mpSnap = await getDocs(collection(db, `meetings/${id}/participants`));
+        setMeetingParticipants(mpSnap.docs.map(d => ({ id: d.id, ...d.data() } as MeetingParticipant)));
 
-        const { data: logData, error: lError } = await supabase
-          .from('meeting_execution_logs')
-          .select('*')
-          .eq('meeting_id', id)
-          .order('started_at', { ascending: true });
-        if (lError) throw lError;
-        setLogs(logData || []);
-      } catch (error) {
+        const logsSnap = await getDocs(query(collection(db, `meetings/${id}/executionLogs`), orderBy('started_at', 'asc')));
+        setLogs(logsSnap.docs.map(d => ({ id: d.id, ...d.data() } as MeetingExecutionLog)));
+      } catch (error: any) {
+        handleFirestoreError(error, OperationType.GET, `meetings/${id}/report`);
         toast.error('Erro ao carregar relatório');
       } finally {
         setLoading(false);
       }
     }
     fetchData();
-  }, [id]);
+  }, [id, navigate]);
 
   const stats = useMemo(() => {
     if (logs.length === 0) return null;

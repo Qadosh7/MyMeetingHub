@@ -1,0 +1,113 @@
+{
+  "entities": {
+    "Meeting": {
+      "title": "Meeting",
+      "description": "Represents a meeting agenda with aggregated data",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "title": { "type": "string" },
+        "event_date": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "last_accessed": { "type": "string" },
+        "is_favorite": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["planning", "in_progress", "completed"] },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "start_time": { "type": "string" },
+        "total_duration": { "type": "number", "description": "Sum of all topic and break durations" },
+        "end_time": { "type": "string", "description": "Calculated end time" },
+        "topics_count": { "type": "number", "description": "Number of topics in the meeting" },
+        "participants_count": { "type": "number", "description": "Number of participants in the meeting" }
+      },
+      "required": ["user_id", "title", "created_at"]
+    },
+    "Participant": {
+      "title": "Participant",
+      "description": "Global participant for a user",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["user_id", "name"]
+    },
+    "Topic": {
+      "title": "Topic",
+      "description": "Agenda topic",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "duration_minutes": { "type": "number" },
+        "order_index": { "type": "number" },
+        "presenter_id": { "type": "string" },
+        "presenter_name": { "type": "string" },
+        "type": { "type": "string", "enum": ["topic"] }
+      },
+      "required": ["title", "duration_minutes", "order_index", "type"]
+    },
+    "Break": {
+      "title": "Break",
+      "description": "Agenda break",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "duration_minutes": { "type": "number" },
+        "order_index": { "type": "number" },
+        "type": { "type": "string", "enum": ["break"] }
+      },
+      "required": ["title", "duration_minutes", "order_index", "type"]
+    },
+    "MeetingParticipant": {
+      "title": "MeetingParticipant",
+      "description": "Participant invited to a specific meeting",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["required", "optional"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["name", "created_at"]
+    },
+    "TopicParticipant": {
+      "title": "TopicParticipant",
+      "description": "Links a meeting participant to a topic",
+      "type": "object",
+      "properties": {
+        "meeting_participant_id": { "type": "string" },
+        "role": { "type": "string", "enum": ["required", "optional"] },
+        "created_at": { "type": "string" }
+      },
+      "required": ["meeting_participant_id", "role", "created_at"]
+    },
+    "ExecutionLog": {
+      "title": "ExecutionLog",
+      "description": "Log entry for an executed topic",
+      "type": "object",
+      "properties": {
+        "topic_id": { "type": "string" },
+        "topic_type": { "type": "string" },
+        "planned_duration": { "type": "number" },
+        "actual_duration": { "type": "number" },
+        "exceeded_time": { "type": "number" },
+        "started_at": { "type": "string" },
+        "ended_at": { "type": "string" },
+        "skipped": { "type": "boolean" },
+        "time_adjustments": { "type": "number" },
+        "adjustment_count": { "type": "number" }
+      },
+      "required": ["topic_id", "topic_type", "planned_duration", "actual_duration", "started_at", "ended_at"]
+    }
+  },
+  "firestore": {
+    "/meetings/{meetingId}": { "schema": "Meeting", "description": "Meetings root" },
+    "/meetings/{meetingId}/topics/{topicId}": { "schema": "Topic", "description": "Topics within a meeting" },
+    "/meetings/{meetingId}/topics/{topicId}/topic_participants/{participantId}": { "schema": "TopicParticipant", "description": "Participants for a topic" },
+    "/meetings/{meetingId}/breaks/{breakId}": { "schema": "Break", "description": "Breaks within a meeting" },
+    "/meetings/{meetingId}/participants/{participantId}": { "schema": "MeetingParticipant", "description": "Participants for a meeting" },
+    "/meetings/{meetingId}/executionLogs/{logId}": { "schema": "ExecutionLog", "description": "Execution logs for a meeting" },
+    "/global_participants/{participantId}": { "schema": "Participant", "description": "Global participants" }
+  }
+}

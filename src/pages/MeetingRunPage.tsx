@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '@/src/lib/supabase';
-import { Meeting, AgendaItem, TopicParticipant, Participant, Topic } from '@/src/types';
+import { db } from '@/src/lib/firebase';
+import { collection, doc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, query, where, orderBy } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '@/src/lib/firestoreUtils';
+import { Meeting, AgendaItem, TopicParticipant, Participant, Topic, Break } from '@/src/types';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
@@ -224,6 +226,7 @@ export default function MeetingRunPage() {
   const topicStartWallTimeRef = useRef<string>(new Date().toISOString());
 
   const saveLog = async (item: AgendaItem, startedAt: string, wasSkipped = false) => {
+    if (!id) return;
     try {
       const endedAt = new Date().toISOString();
       const planned = item.duration_minutes;
@@ -231,8 +234,7 @@ export default function MeetingRunPage() {
       const actual = wasSkipped ? 0 : planned - (timeLeft / 60);
       const exceeded = !wasSkipped && timeLeft < 0 ? Math.abs(timeLeft / 60) : 0;
 
-      await supabase.from('meeting_execution_logs').insert([{
-        meeting_id: id,
+      await addDoc(collection(db, `meetings/${id}/executionLogs`), {
         topic_id: item.id,
         topic_type: item.type,
         planned_duration: planned,
@@ -243,12 +245,12 @@ export default function MeetingRunPage() {
         skipped: wasSkipped,
         time_adjustments: topicAdjustments.minutes,
         adjustment_count: topicAdjustments.count
-      }]);
+      });
       
       // Reset adjustments for next topic
       setTopicAdjustments({ minutes: 0, count: 0, skipped: false });
-    } catch (error) {
-      console.error('Error saving execution log:', error);
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/executionLogs`);
     }
   };
 
@@ -303,37 +305,41 @@ export default function MeetingRunPage() {
   );
 
   const fetchMeetingData = useCallback(async () => {
+    if (!id) return;
     try {
       setLoading(true);
-      const { data: meetingData, error: mError } = await supabase.from('meetings').select('*').eq('id', id).single();
-      if (mError) throw mError;
+      const meetingSnap = await getDoc(doc(db, 'meetings', id));
+      if (!meetingSnap.exists()) {
+        toast.error('Reunião não encontrada.');
+        navigate('/');
+        return;
+      }
+      const meetingData = { id: meetingSnap.id, ...meetingSnap.data() } as Meeting;
       setMeeting(meetingData);
 
       if (meetingData.status !== 'in_progress' && meetingData.status !== 'completed') {
-        await supabase.from('meetings').update({ status: 'in_progress' }).eq('id', id);
+        await updateDoc(doc(db, 'meetings', id), { status: 'in_progress' });
       }
 
-      const { data: gParts } = await supabase.from('participants').select('*');
-      if (gParts) setGlobalParticipants(gParts);
+      const gPartsSnap = await getDocs(collection(db, 'global_participants'));
+      setGlobalParticipants(gPartsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Participant)));
 
-      const { data: topics, error: tError } = await supabase.from('topics').select('*').eq('meeting_id', id);
-      if (tError) throw tError;
+      const topicsSnap = await getDocs(collection(db, `meetings/${id}/topics`));
+      const topics = topicsSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'topic' as const })) as Topic[];
 
-      const { data: breaks, error: bError } = await supabase.from('breaks').select('*').eq('meeting_id', id);
-      if (bError) throw bError;
+      const breaksSnap = await getDocs(collection(db, `meetings/${id}/breaks`));
+      const breaks = breaksSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'break' as const })) as Break[];
 
-      const topicIds = topics?.map(t => t.id) || [];
-      const { data: parts, error: pError } = await supabase
-        .from('topic_participants')
-        .select('*')
-        .in('topic_id', topicIds);
-      if (pError) throw pError;
-      setParticipants(parts || []);
+      const allTopicParticipants: TopicParticipant[] = [];
+      await Promise.all(topics.map(async (topic) => {
+        const tpSnap = await getDocs(collection(db, `meetings/${id}/topics/${topic.id}/topic_participants`));
+        tpSnap.docs.forEach(d => {
+          allTopicParticipants.push({ id: d.id, topic_id: topic.id, ...d.data() } as TopicParticipant);
+        });
+      }));
+      setParticipants(allTopicParticipants);
 
-      const merged: AgendaItem[] = [
-        ...(topics || []).map(t => ({ ...t, type: 'topic' as const })),
-        ...(breaks || []).map(b => ({ ...b, type: 'break' as const }))
-      ].sort((a, b) => a.order_index - b.order_index);
+      const merged: AgendaItem[] = [...topics, ...breaks].sort((a, b) => a.order_index - b.order_index);
 
       setItems(merged);
       
@@ -341,8 +347,8 @@ export default function MeetingRunPage() {
         setTimeLeft(merged[0].duration_minutes * 60);
       }
     } catch (error: any) {
-      toast.error('Erro ao carregar reunião');
-      navigate(`/meeting/${id}`);
+      handleFirestoreError(error, OperationType.GET, `meetings/${id}`);
+      navigate(`/dashboard`);
     } finally {
       setLoading(false);
     }
@@ -440,10 +446,13 @@ export default function MeetingRunPage() {
       const startedAt = topicStartWallTimeRef.current;
       await saveLog(currentItem, startedAt, skipped);
 
-      supabase.from('meetings').update({ status: 'completed' }).eq('id', id).then(() => {
-        toast.success('Reunião finalizada!');
-        navigate(`/meeting/${id}/report`);
-      });
+      if (id) {
+        const meetingRef = doc(db, 'meetings', id);
+        updateDoc(meetingRef, { status: 'completed' }).then(() => {
+          toast.success('Reunião finalizada!');
+          navigate(`/meeting/${id}/report`);
+        });
+      }
     }
   };
 
@@ -586,13 +595,13 @@ export default function MeetingRunPage() {
     }
 
     saveTimeoutRef.current[itemId] = setTimeout(async () => {
+      if (!id) return;
       try {
-        const table = type === 'topic' ? 'topics' : 'breaks';
-        const { error } = await supabase.from(table).update(updates).eq('id', itemId);
-        if (error) throw error;
-      } catch (error) {
-        console.error('Error saving update:', error);
-        toast.error('Erro ao salvar alterações no banco');
+        const collectionName = type === 'topic' ? 'topics' : 'breaks';
+        const itemRef = doc(db, `meetings/${id}/${collectionName}`, itemId);
+        await updateDoc(itemRef, updates);
+      } catch (error: any) {
+        handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/${type}s/${itemId}`);
       }
     }, 1000);
   };
@@ -616,13 +625,13 @@ export default function MeetingRunPage() {
 
       // Save to database
       try {
-        const updates = newArray.map((item: any, index: number) => {
-          const dbTable = item.type === 'topic' ? 'topics' : 'breaks';
-          return supabase.from(dbTable).update({ order_index: index }).eq('id', item.id);
-        });
-        await Promise.all(updates);
-      } catch (error) {
-        toast.error('Erro ao salvar nova ordem');
+        await Promise.all(newArray.map(async (item: any, index: number) => {
+          if (!id) return;
+          const collectionName = item.type === 'topic' ? 'topics' : 'breaks';
+          await updateDoc(doc(db, `meetings/${id}/${collectionName}`, item.id), { order_index: index });
+        }));
+      } catch (error: any) {
+        handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/agenda/reorder`);
       }
     }
   };

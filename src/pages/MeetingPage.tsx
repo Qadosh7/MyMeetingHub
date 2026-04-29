@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { supabase } from '@/src/lib/supabase';
+import { db } from '@/src/lib/firebase';
+import { collection, doc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, query, where, orderBy } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '@/src/lib/firestoreUtils';
 import { useAuth } from '@/src/hooks/useAuth';
 import { Meeting, Topic, Break, AgendaItem, TopicParticipant, Participant, MeetingParticipant } from '@/src/types';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -539,23 +541,22 @@ export default function MeetingPage() {
   }, [id]);
 
   const toggleFavorite = async () => {
-    if (!meeting) return;
+    if (!meeting || !id) return;
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ is_favorite: !meeting.is_favorite })
-        .eq('id', id);
-
-      if (error) throw error;
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        is_favorite: !meeting.is_favorite,
+        updated_at: new Date().toISOString()
+      });
       setMeeting({ ...meeting, is_favorite: !meeting.is_favorite });
       toast.success(meeting.is_favorite ? 'Removido dos favoritos' : 'Adicionado aos favoritos');
-    } catch (error) {
-      toast.error('Erro ao atualizar favorito');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const addTag = async () => {
-    if (!newTag.trim() || !meeting) return;
+    if (!newTag.trim() || !meeting || !id) return;
     const currentTags = meeting.tags || [];
     if (currentTags.includes(newTag.trim())) {
       setNewTag('');
@@ -563,74 +564,129 @@ export default function MeetingPage() {
     }
     const updatedTags = [...currentTags, newTag.trim()];
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ tags: updatedTags })
-        .eq('id', id);
-
-      if (error) throw error;
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        tags: updatedTags,
+        updated_at: new Date().toISOString()
+      });
       setMeeting({ ...meeting, tags: updatedTags });
       setNewTag('');
-    } catch (error) {
-      toast.error('Erro ao adicionar tag');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const removeTag = async (tagToRemove: string) => {
-    if (!meeting) return;
+    if (!meeting || !id) return;
     const updatedTags = (meeting.tags || []).filter(t => t !== tagToRemove);
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ tags: updatedTags })
-        .eq('id', id);
-
-      if (error) throw error;
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        tags: updatedTags,
+        updated_at: new Date().toISOString()
+      });
       setMeeting({ ...meeting, tags: updatedTags });
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
+    }
+  };
+
+  const updateMeetingMetadata = async (
+    params?: {
+      items?: AgendaItem[], 
+      participants?: MeetingParticipant[],
+      startTime?: string
+    }
+  ) => {
+    if (!id || !meeting) return;
+    
+    const itemsToUse = params?.items || items;
+    const participantsToUse = params?.participants || meetingParticipants;
+    const startTimeToUse = params?.startTime || meeting.start_time;
+    
+    const total_duration = itemsToUse.reduce((acc, item) => acc + (item.duration_minutes || 0), 0);
+    const topics_count = itemsToUse.filter(item => item.type === 'topic').length;
+    const participants_count = participantsToUse.length;
+    
+    let end_time = meeting.end_time;
+    if (startTimeToUse) {
+      try {
+        const start = new Date(startTimeToUse);
+        end_time = new Date(start.getTime() + total_duration * 60000).toISOString();
+      } catch (e) {
+        console.error('Invalid start_time');
+      }
+    }
+    
+    try {
+      const meetingRef = doc(db, 'meetings', id);
+      const updates: any = {
+        total_duration,
+        topics_count,
+        participants_count,
+        updated_at: new Date().toISOString()
+      };
+      if (end_time) updates.end_time = end_time;
+
+      await updateDoc(meetingRef, updates);
+      setMeeting(prev => prev ? { 
+        ...prev, 
+        total_duration, 
+        topics_count, 
+        participants_count,
+        end_time
+      } : null);
     } catch (error) {
-      toast.error('Erro ao remover tag');
+      console.error('Error updating meeting metadata:', error);
     }
   };
 
   const fetchMeetingData = async () => {
+    if (!id) return;
     try {
       setLoading(true);
-      const { data: meetingData, error: mError } = await supabase.from('meetings').select('*').eq('id', id).single();
-      if (mError) throw mError;
+      
+      const meetingSnap = await getDoc(doc(db, 'meetings', id));
+      if (!meetingSnap.exists()) {
+        toast.error('Reunião não encontrada.');
+        navigate('/');
+        return;
+      }
+      
+      const meetingData = { id: meetingSnap.id, ...meetingSnap.data() } as Meeting;
       setMeeting(meetingData);
       setTitleInput(meetingData.title);
 
-      const { data: gParts, error: geError } = await supabase.from('participants').select('*');
-      if (!geError) setGlobalParticipants(gParts || []);
+      // Fetch global participants
+      const gPartsSnap = await getDocs(collection(db, 'global_participants'));
+      setGlobalParticipants(gPartsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Participant)));
 
-      const { data: mParts, error: meError } = await supabase
-        .from('meeting_participants')
-        .select('*')
-        .eq('meeting_id', id);
-      if (!meError) setMeetingParticipants(mParts || []);
+      // Fetch meeting participants
+      const mPartsSnap = await getDocs(collection(db, `meetings/${id}/participants`));
+      const mParticipants = mPartsSnap.docs.map(d => ({ id: d.id, ...d.data() } as MeetingParticipant));
+      setMeetingParticipants(mParticipants);
 
-      const { data: topics, error: tError } = await supabase.from('topics').select('*').eq('meeting_id', id);
-      if (tError) throw tError;
+      // Fetch topics and breaks
+      const topicsSnap = await getDocs(collection(db, `meetings/${id}/topics`));
+      const topics = topicsSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'topic' as const } as Topic & { type: 'topic' }));
 
-      const { data: breaks, error: bError } = await supabase.from('breaks').select('*').eq('meeting_id', id);
-      if (bError) throw bError;
+      const breaksSnap = await getDocs(collection(db, `meetings/${id}/breaks`));
+      const breaks = breaksSnap.docs.map(d => ({ id: d.id, ...d.data(), type: 'break' as const } as Break & { type: 'break' }));
 
-      const topicIds = topics?.map(t => t.id) || [];
-      const { data: parts, error: pError } = await supabase
-        .from('topic_participants')
-        .select('*')
-        .in('topic_id', topicIds);
-      if (pError) throw pError;
-      setParticipants(parts || []);
+      // Fetch all topic participants for all topics
+      const allTopicParticipants: TopicParticipant[] = [];
+      await Promise.all(topics.map(async (topic) => {
+        const tpSnap = await getDocs(collection(db, `meetings/${id}/topics/${topic.id}/topic_participants`));
+        tpSnap.docs.forEach(d => {
+          allTopicParticipants.push({ id: d.id, topic_id: topic.id, ...d.data() } as TopicParticipant);
+        });
+      }));
+      setParticipants(allTopicParticipants);
 
-      const merged: AgendaItem[] = [
-        ...(topics || []).map(t => ({ ...t, type: 'topic' as const })),
-        ...(breaks || []).map(b => ({ ...b, type: 'break' as const }))
-      ].sort((a, b) => a.order_index - b.order_index);
-
+      const merged: AgendaItem[] = [...topics, ...breaks].sort((a, b) => a.order_index - b.order_index);
       setItems(merged);
     } catch (error: any) {
-      toast.error('Erro ao carregar reunião.');
+      handleFirestoreError(error, OperationType.GET, `meetings/${id}`);
       navigate('/');
     } finally {
       setLoading(false);
@@ -652,159 +708,147 @@ export default function MeetingPage() {
   }, [meeting?.start_time, items]);
 
   const updateStartTime = async (newStartTime: string) => {
+    if (!id) return;
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ 
-          start_time: newStartTime,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-      
-      if (error) {
-        console.error('Error updating start time:', error);
-        throw error;
-      }
-      
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        start_time: newStartTime,
+        updated_at: new Date().toISOString()
+      });
       setMeeting(prev => prev ? { ...prev, start_time: newStartTime } : null);
+      updateMeetingMetadata({ startTime: newStartTime });
       toast.success('Horário de início atualizado');
     } catch (error: any) {
-      console.error('Error in updateStartTime:', error);
-      toast.error('Erro ao atualizar horário');
-      
-      if (error.message?.includes('column') && error.message?.includes('start_time')) {
-        toast.info('A coluna "start_time" parece estar faltando.');
-      }
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const updateMeetingDate = async (newDate: string) => {
+    if (!id) return;
     try {
-      const dateValue = newDate || null;
-      const { error } = await supabase
-        .from('meetings')
-        .update({ 
-          event_date: dateValue,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-      
-      if (error) {
-        console.error('Error updating meeting date:', error);
-        throw error;
-      }
-      
-      setMeeting(prev => prev ? { ...prev, event_date: dateValue } : null);
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        event_date: newDate || null,
+        updated_at: new Date().toISOString()
+      });
+      setMeeting(prev => prev ? { ...prev, event_date: newDate || null } : null);
+      updateMeetingMetadata({ startTime: meeting?.start_time ? new Date(newDate + 'T' + format(parseISO(meeting.start_time), 'HH:mm:ss')).toISOString() : undefined });
       toast.success('Data atualizada');
     } catch (error: any) {
-      console.error('Error in updateMeetingDate:', error);
-      toast.error('Erro ao atualizar data');
-      
-      // If it's a missing column error, inform the user
-      if (error.message?.includes('column') && error.message?.includes('event_date')) {
-        toast.info('A coluna "event_date" parece estar faltando no banco de dados.');
-      }
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const updateMeetingTitle = async () => {
-    if (!titleInput.trim() || titleInput === meeting?.title) {
+    if (!titleInput.trim() || titleInput === meeting?.title || !id) {
       setIsEditingTitle(false);
       return;
     }
     try {
-      const { error } = await supabase
-        .from('meetings')
-        .update({ 
-          title: titleInput,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-      if (error) throw error;
-      setMeeting({ ...meeting!, title: titleInput });
+      const meetingRef = doc(db, 'meetings', id);
+      await updateDoc(meetingRef, {
+        title: titleInput,
+        updated_at: new Date().toISOString()
+      });
+      setMeeting(prev => prev ? { ...prev, title: titleInput } : null);
       setIsEditingTitle(false);
       toast.success('Título atualizado');
     } catch (error: any) {
-      toast.error('Erro ao atualizar título');
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}`);
     }
   };
 
   const addItem = async (type: 'topic' | 'break', customTitle?: string, customDuration?: number) => {
+    if (!id) return;
     const nextIndex = items.length;
-    const body = {
-      meeting_id: id,
+    const body: any = {
       title: customTitle || (type === 'topic' ? 'Novo Tópico' : 'Intervalo'),
       duration_minutes: customDuration || (type === 'topic' ? 15 : 10),
-      order_index: nextIndex
+      order_index: nextIndex,
+      type
     };
 
     try {
-      const dbTable = type === 'topic' ? 'topics' : 'breaks';
-      const { data, error } = await supabase.from(dbTable).insert([body]).select();
-      if (error) throw error;
-      
-      const newItem = { ...data[0], type } as AgendaItem;
-      setItems(prev => [...prev, newItem]);
+      const collectionName = type === 'topic' ? 'topics' : 'breaks';
+      const docRef = await addDoc(collection(db, `meetings/${id}/${collectionName}`), body);
+      const newItem = { id: docRef.id, ...body } as AgendaItem;
+      const newItems = [...items, newItem];
+      setItems(newItems);
+      updateMeetingMetadata({ items: newItems });
     } catch (error: any) {
-      toast.error('Erro ao adicionar item');
+      handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/${type}s`);
     }
   };
 
   const deleteItem = async (itemId: string, type: 'topic' | 'break') => {
+    if (!id) return;
     try {
-      const dbTable = type === 'topic' ? 'topics' : 'breaks';
-      await supabase.from(dbTable).delete().eq('id', itemId);
-      setItems(items.filter(item => item.id !== itemId));
+      const collectionName = type === 'topic' ? 'topics' : 'breaks';
+      await deleteDoc(doc(db, `meetings/${id}/${collectionName}`, itemId));
+      const newItems = items.filter(item => item.id !== itemId);
+      setItems(newItems);
+      updateMeetingMetadata({ items: newItems });
       toast.success('Item removido');
-    } catch (error) {
-      toast.error('Erro ao remover item');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.DELETE, `meetings/${id}/${type}s/${itemId}`);
     }
   };
 
   const updateItem = async (itemId: string, type: 'topic' | 'break', updates: any) => {
+    if (!id) return;
     try {
-      const dbTable = type === 'topic' ? 'topics' : 'breaks';
-      
-      const { error } = await supabase.from(dbTable).update(updates).eq('id', itemId);
-      
-      if (error) throw error;
+      const collectionName = type === 'topic' ? 'topics' : 'breaks';
+      const itemRef = doc(db, `meetings/${id}/${collectionName}`, itemId);
+      await updateDoc(itemRef, updates);
 
-      setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...updates } : item));
+      const newItems = items.map(item => item.id === itemId ? { ...item, ...updates } : item);
+      setItems(newItems);
+      if (updates.duration_minutes !== undefined) {
+        updateMeetingMetadata({ items: newItems });
+      }
       toast.success('Agenda atualizada');
-    } catch (error) {
-      toast.error('Erro ao atualizar item');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/${type}s/${itemId}`);
     }
   };
 
   const addMeetingParticipant = async (name: string) => {
-    if (!name.trim()) return;
+    if (!name.trim() || !id) return;
     try {
-      const { data, error } = await supabase
-        .from('meeting_participants')
-        .insert([{ meeting_id: id, name, email: '' }])
-        .select()
-        .single();
-      if (error) throw error;
-      setMeetingParticipants(prev => [...prev, data]);
+      const participantData = {
+        name,
+        email: '',
+        role: 'required',
+        created_at: new Date().toISOString()
+      };
+      const docRef = await addDoc(collection(db, `meetings/${id}/participants`), participantData);
+      const data = { id: docRef.id, ...participantData };
+      const newParticipants = [...meetingParticipants, data];
+      setMeetingParticipants(newParticipants);
+      updateMeetingMetadata({ participants: newParticipants });
       setNewMPName('');
       toast.success('Participante adicionado à reunião');
       
-      // Also ensure it exists in global list if not there
       ensureGlobalParticipant(name);
-    } catch (error) {
-      toast.error('Erro ao adicionar participante');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/participants`);
     }
   };
 
   const removeMeetingParticipant = async (mpId: string) => {
+    if (!id) return;
     try {
-      await supabase.from('meeting_participants').delete().eq('id', mpId);
+      await deleteDoc(doc(db, `meetings/${id}/participants`, mpId));
       
-      // Update local state and linked topics
-      setMeetingParticipants(prev => prev.filter(p => p.id !== mpId));
+      const newParticipants = meetingParticipants.filter(p => p.id !== mpId);
+      setMeetingParticipants(newParticipants);
+      updateMeetingMetadata({ participants: newParticipants });
+      // Topic assignments need to be cleared too. 
+      // This is more complex because they are in subcollections of topics.
+      // We'll iterate through all topics and clear assignments for this MP.
       setParticipants(prev => prev.filter(p => p.meeting_participant_id !== mpId));
       
-      // Also reset presenter if this person was a presenter
+      // Update local items for presenter reset
       setItems(prev => prev.map(item => {
         if (item.type === 'topic' && item.presenter_id === mpId) {
           return { ...item, presenter_id: null, presenter_name: null };
@@ -812,16 +856,20 @@ export default function MeetingPage() {
         return item;
       }));
 
-      // Persist presenter reset
-      await supabase.from('topics').update({ presenter_id: null, presenter_name: null }).eq('presenter_id', mpId);
+      // Persistence: Presenter fields are on the topic doc itself
+      const topicsWithThisPresenter = items.filter(i => i.type === 'topic' && (i as Topic).presenter_id === mpId);
+      await Promise.all(topicsWithThisPresenter.map(async (t) => {
+         await updateDoc(doc(db, `meetings/${id}/topics`, t.id), { presenter_id: null, presenter_name: null });
+      }));
 
       toast.success('Participante removido da reunião');
-    } catch (error) {
-      toast.error('Erro ao remover participante');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.DELETE, `meetings/${id}/participants/${mpId}`);
     }
   };
 
   const addParticipantToTopic = async (topicId: string, meetingParticipantId: string, role: 'required' | 'optional' = 'optional') => {
+    if (!id) return;
     const existing = participants.find(p => p.topic_id === topicId && p.meeting_participant_id === meetingParticipantId);
     if (existing) {
       toast.info('Participante já está neste tópico');
@@ -832,69 +880,71 @@ export default function MeetingPage() {
     if (!mp) return;
 
     try {
-      const { data, error } = await supabase
-        .from('topic_participants')
-        .insert([{ 
-          topic_id: topicId, 
-          meeting_participant_id: meetingParticipantId,
-          participant_name: mp.name, // Keep for backward compatibility/constraint
-          role 
-        }])
-        .select()
-        .single();
-      if (error) throw error;
+      const tpData = { 
+        meeting_participant_id: meetingParticipantId,
+        participant_name: mp.name,
+        role,
+        created_at: new Date().toISOString()
+      };
+      
+      const docRef = await addDoc(collection(db, `meetings/${id}/topics/${topicId}/topic_participants`), tpData);
+      const data = { id: docRef.id, topic_id: topicId, ...tpData };
       setParticipants(prev => [...prev, data]);
-    } catch (error) {
-      console.error('Error adding participant:', error);
-      toast.error('Erro ao vincular participante ao tópico');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/topics/${topicId}/topic_participants`);
     }
   };
 
   const toggleParticipantRole = async (tpId: string, currentRole: 'required' | 'optional') => {
+    if (!id) return;
     const newRole = currentRole === 'required' ? 'optional' : 'required';
+    // We need to find which topic this assignment belongs to
+    const assignment = participants.find(p => p.id === tpId);
+    if (!assignment || !assignment.topic_id) return;
+
     try {
-      const { error } = await supabase
-        .from('topic_participants')
-        .update({ role: newRole })
-        .eq('id', tpId);
-      if (error) throw error;
+      await updateDoc(doc(db, `meetings/${id}/topics/${assignment.topic_id}/topic_participants`, tpId), { role: newRole });
       setParticipants(prev => prev.map(p => p.id === tpId ? { ...p, role: newRole } : p));
-    } catch (error) {
-      toast.error('Erro ao alterar papel');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/topics/${assignment.topic_id}/topic_participants/${tpId}`);
     }
   };
 
   const removeParticipantFromTopic = async (tpId: string) => {
+    if (!id) return;
+    const assignment = participants.find(p => p.id === tpId);
+    if (!assignment || !assignment.topic_id) return;
+
     try {
-      await supabase.from('topic_participants').delete().eq('id', tpId);
+      await deleteDoc(doc(db, `meetings/${id}/topics/${assignment.topic_id}/topic_participants`, tpId));
       setParticipants(prev => prev.filter(p => p.id !== tpId));
-    } catch (error) {
-      toast.error('Erro ao remover participante do tópico');
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.DELETE, `meetings/${id}/topics/${assignment.topic_id}/topic_participants/${tpId}`);
     }
   };
 
   const addAllParticipantsToTopic = async (topicId: string, role: 'required' | 'optional') => {
-    const payloads = meetingParticipants
-      .filter(mp => !participants.find(p => p.topic_id === topicId && p.meeting_participant_id === mp.id))
-      .map(mp => ({
-        topic_id: topicId,
-        meeting_participant_id: mp.id,
-        participant_name: mp.name,
-        role
-      }));
-
-    if (payloads.length === 0) return;
+    if (!id) return;
+    const missingMPs = meetingParticipants.filter(mp => !participants.find(p => p.topic_id === topicId && p.meeting_participant_id === mp.id));
+    if (missingMPs.length === 0) return;
 
     try {
-      const { data, error } = await supabase
-        .from('topic_participants')
-        .insert(payloads)
-        .select();
-      if (error) throw error;
-      setParticipants(prev => [...prev, ...data]);
-      toast.success(`${data.length} participantes adicionados`);
-    } catch (error) {
-      toast.error('Erro ao adicionar todos');
+      const addedParticipants: TopicParticipant[] = [];
+      await Promise.all(missingMPs.map(async (mp) => {
+        const tpData = {
+          meeting_participant_id: mp.id,
+          participant_name: mp.name,
+          role,
+          created_at: new Date().toISOString()
+        };
+        const docRef = await addDoc(collection(db, `meetings/${id}/topics/${topicId}/topic_participants`), tpData);
+        addedParticipants.push({ id: docRef.id, topic_id: topicId, ...tpData });
+      }));
+      
+      setParticipants(prev => [...prev, ...addedParticipants]);
+      toast.success(`${addedParticipants.length} participantes adicionados`);
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.WRITE, `meetings/${id}/topics/${topicId}/topic_participants`);
     }
   };
 
@@ -904,31 +954,19 @@ export default function MeetingPage() {
     if (existing) return existing;
 
     try {
-      const { data, error } = await supabase
-        .from('participants')
-        .insert([{ name, user_id: user.id }])
-        .select()
-        .single();
-      if (error) {
-        // If table doesn't exist, just treat as transient and return null
-        if (error.message.includes('not found') || error.code === 'PGRST116') return null;
-        throw error;
-      }
+      const participantData = { name, user_id: user.uid };
+      const docRef = await addDoc(collection(db, 'global_participants'), participantData);
+      const data = { id: docRef.id, ...participantData };
       setGlobalParticipants(prev => [...prev, data]);
       return data;
     } catch {
-      // Quietly fail for global participants if schema not ready
       return null;
     }
   };
 
   const removeParticipant = async (participantId: string) => {
-    try {
-      await supabase.from('topic_participants').delete().eq('id', participantId);
-      setParticipants(participants.filter(p => p.id !== participantId));
-    } catch (error) {
-      toast.error('Erro ao remover participante');
-    }
+    // This seems related to removing an assignment
+    await removeParticipantFromTopic(participantId);
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -968,13 +1006,12 @@ export default function MeetingPage() {
       const newArray = arrayMove(items, oldIndex, newIndex);
       setItems(newArray);
       try {
-        const updates = newArray.map((item: AgendaItem, index: number) => {
-          const dbTable = item.type === 'topic' ? 'topics' : 'breaks';
-          return supabase.from(dbTable).update({ order_index: index }).eq('id', item.id);
-        });
-        await Promise.all(updates);
-      } catch (error) {
-        toast.error('Erro ao salvar nova ordem');
+        await Promise.all(newArray.map(async (item: AgendaItem, index: number) => {
+          const collectionName = item.type === 'topic' ? 'topics' : 'breaks';
+          await updateDoc(doc(db, `meetings/${id}/${collectionName}`, item.id), { order_index: index });
+        }));
+      } catch (error: any) {
+        handleFirestoreError(error, OperationType.UPDATE, `meetings/${id}/agenda/reorder`);
       }
     }
   };

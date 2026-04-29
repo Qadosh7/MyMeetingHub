@@ -12,6 +12,11 @@ export interface Meeting {
   start_time?: string | null;
   topics?: (Topic & { topic_participants?: { participant_id: string, participant_name: string }[] })[];
   breaks?: Break[];
+  // Aggregated data
+  total_duration?: number;
+  end_time?: string;
+  topics_count?: number;
+  participants_count?: number;
 }
 
 export interface Participant {
