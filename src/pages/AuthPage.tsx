@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup
+} from 'firebase/auth';
 import { auth } from '@/src/lib/firebase';
 import { useAuth } from '@/src/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -25,7 +30,8 @@ import {
   X,
   Play,
   ClipboardList,
-  Target
+  Target,
+  Chrome
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
@@ -45,20 +51,62 @@ export default function AuthPage() {
     }
   }, [user, authLoading, navigate]);
 
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      toast.success('Login com Google realizado!');
+      navigate('/');
+    } catch (error: any) {
+      console.error('Google Auth error:', error);
+      toast.error(error.message || 'Erro ao entrar com Google');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedEmail = email.trim();
+    console.log('handleAuth triggered', { isSignUp, email: trimmedEmail });
     setLoading(true);
     try {
       if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        console.log('Attempting sign up...');
+        await createUserWithEmailAndPassword(auth, trimmedEmail, password);
         toast.success('Cadastro realizado com sucesso!');
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        console.log('Attempting sign in...');
+        await signInWithEmailAndPassword(auth, trimmedEmail, password);
+        console.log('Sign in successful');
         toast.success('Login realizado!');
         navigate('/');
       }
     } catch (error: any) {
-      toast.error(error.message || 'Erro ao processar');
+      console.error('Auth error:', error);
+      let errorMsg = error.message || 'Erro ao processar';
+      
+      if (error.code === 'auth/operation-not-allowed') {
+        errorMsg = 'O login com E-mail/Senha não está habilitado no Console do Firebase. Use o Google ou peça ao administrador para habilitar o provedor.';
+      } else if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        errorMsg = isSignUp 
+          ? 'Não foi possível criar a conta. Verifique os dados ou tente outro e-mail.'
+          : 'E-mail ou senha incorretos. Se você ainda não tem uma conta, clique em "Cadastre-se grátis" abaixo.';
+      } else if (error.code === 'auth/email-already-in-use') {
+        errorMsg = 'Este e-mail já possui uma conta. Tente fazer login em vez de cadastrar.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMsg = 'O formato do e-mail é inválido. Verifique se digitou corretamente.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMsg = 'A senha é muito fraca. Ela deve ter pelo menos 6 caracteres.';
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        errorMsg = 'O login foi cancelado porque a janela foi fechada.';
+      }
+      
+      toast.error(errorMsg, { 
+        duration: 8000,
+        description: 'Dica: Tente entrar com sua conta Google se o erro persistir.'
+      });
     } finally {
       setLoading(false);
     }
@@ -430,10 +478,36 @@ export default function AuthPage() {
                         />
                       </div>
                       <Button 
+                        type="submit"
                         disabled={loading}
-                        className="w-full h-16 rounded-2xl text-lg font-black shadow-xl shadow-primary/20 transition-all active:scale-95"
+                        className={cn(
+                          "w-full h-16 rounded-2xl text-lg font-black shadow-xl transition-all active:scale-95",
+                          isSignUp 
+                            ? "bg-zinc-900 text-white hover:bg-zinc-800 shadow-zinc-900/20" 
+                            : "bg-primary text-white hover:bg-primary/90 shadow-primary/20"
+                        )}
                       >
                         {loading ? <Loader2 className="animate-spin" /> : (isSignUp ? 'Criar Minha Conta' : 'Acessar Plataforma')}
+                      </Button>
+
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <span className="w-full border-t border-zinc-100" />
+                        </div>
+                        <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest">
+                          <span className="bg-white px-4 text-zinc-400">Ou continue com</span>
+                        </div>
+                      </div>
+
+                      <Button 
+                        type="button"
+                        variant="outline"
+                        disabled={loading}
+                        onClick={handleGoogleSignIn}
+                        className="w-full h-16 rounded-2xl text-base font-black border-2 border-zinc-100 hover:bg-zinc-50 transition-all gap-3"
+                      >
+                        <Chrome size={20} />
+                        Entrar com Google
                       </Button>
                    </form>
 
