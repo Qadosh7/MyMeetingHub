@@ -53,22 +53,28 @@ export default function AuthPage() {
   }, [user, authLoading, navigate]);
 
   const handleForgotPassword = async () => {
-    if (!email) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
       toast.error('Por favor, digite seu e-mail primeiro para recuperar a senha.');
       return;
     }
     
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email.trim());
-      toast.success('E-mail de recuperação enviado! Verifique sua caixa de entrada.');
+      console.log('Enviando e-mail de recuperação para:', trimmedEmail);
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      toast.success('E-mail de recuperação enviado!', {
+        description: 'Verifique sua caixa de entrada e também a pasta de spam.'
+      });
     } catch (error: any) {
       console.error('Reset password error:', error);
       let errorMsg = 'Erro ao enviar e-mail de recuperação.';
       if (error.code === 'auth/user-not-found') {
-        errorMsg = 'Nenhum usuário encontrado com este e-mail.';
+        errorMsg = 'Nenhum usuário encontrado com este e-mail. Verifique se digitou corretamente ou crie uma conta.';
       } else if (error.code === 'auth/invalid-email') {
         errorMsg = 'O formato do e-mail é inválido.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMsg = 'Muitas tentativas em pouco tempo. Tente novamente em alguns minutos.';
       }
       toast.error(errorMsg);
     } finally {
